@@ -1,0 +1,808 @@
+openapi: 3.1.0
+info:
+  title: Тендровик AI — Backend API
+  version: 0.1.0
+  description: >
+    API-контракт backend-модуля платформы «Тендровик AI». Автоматизация цикла
+    тендеров: онбординг, поиск и карточка тендера, расчёт цены и три стратегии,
+    решение об участии, маршруты согласования (сметчик → юрист → тендеровик →
+    владелец), база знаний, CRM-воронка и статистика, поддержка (AI-чат и
+    эскалация в тикет), реклама и ротация баннеров, интеграции и статусы,
+    мониторинг сроков и уведомления.
+
+    ВАЖНО: финальная подача заявки, КЭП, платежи и любые юридически значимые
+    действия всегда требуют подтверждения человека. Эндпоинт подачи лишь
+    разблокирует шаг подтверждения при наличии всех согласований — он не
+    отправляет заявку на площадку.
+  license:
+    name: UNLICENSED
+servers:
+  - url: https://api.tendrovik.example/v1
+    description: Placeholder (не подключено)
+  - url: http://localhost:3000/v1
+    description: Local
+
+tags:
+  - name: Onboarding
+  - name: Tenders
+  - name: Pricing
+  - name: Decisions
+  - name: Approvals
+  - name: Knowledge
+  - name: CRM
+  - name: Support
+  - name: Ads
+  - name: Integrations
+  - name: Monitoring
+
+security:
+  - bearerAuth: []
+
+paths:
+  # ─────────────── Onboarding / AI-опросник ───────────────
+  /onboarding/survey:
+    get:
+      tags: [Onboarding]
+      summary: Получить AI-опросник клиента
+      responses:
+        "200":
+          description: Список вопросов онбординга
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OnboardingSurvey"
+    post:
+      tags: [Onboarding]
+      summary: Отправить ответы опросника и создать профиль компании
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OnboardingAnswers"
+      responses:
+        "201":
+          description: Профиль компании создан
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CompanyProfile"
+
+  # ─────────────── Поиск и список тендеров ───────────────
+  /tenders:
+    get:
+      tags: [Tenders]
+      summary: Список / поиск тендеров
+      parameters:
+        - { name: q, in: query, schema: { type: string }, description: Ключевые слова }
+        - { name: region, in: query, schema: { type: string } }
+        - { name: law, in: query, schema: { type: string, enum: ["44-ФЗ", "223-ФЗ", "commercial"] } }
+        - { name: minPrice, in: query, schema: { type: number } }
+        - { name: maxPrice, in: query, schema: { type: number } }
+        - { name: status, in: query, schema: { $ref: "#/components/schemas/TenderStatus" } }
+        - { name: page, in: query, schema: { type: integer, default: 1 } }
+        - { name: pageSize, in: query, schema: { type: integer, default: 20 } }
+      responses:
+        "200":
+          description: Страница тендеров
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenderPage"
+
+  /tenders/search:
+    post:
+      tags: [Tenders]
+      summary: Инициировать поиск по подключённым источникам (фоновая задача ingest)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TenderSearchQuery"
+      responses:
+        "202":
+          description: Задача поставлена в очередь
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobAccepted"
+
+  /tenders/{tenderId}:
+    get:
+      tags: [Tenders]
+      summary: Карточка тендера
+      parameters:
+        - $ref: "#/components/parameters/TenderId"
+      responses:
+        "200":
+          description: Детальная карточка тендера
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenderCard"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ─────────────── Расчёт цены и три стратегии ───────────────
+  /tenders/{tenderId}/pricing:
+    post:
+      tags: [Pricing]
+      summary: Рассчитать себестоимость и три ценовые стратегии
+      description: >
+        Возвращает разбивку себестоимости и три стратегии (aggressive / balanced
+        / premium). Ни одна стратегия не может быть ниже минимальной маржи из
+        pricing_rules — цена автоматически поднимается до минимально допустимой.
+      parameters:
+        - $ref: "#/components/parameters/TenderId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PricingRequest"
+      responses:
+        "200":
+          description: Себестоимость и стратегии
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PricingResult"
+
+  # ─────────────── Решение участвуем / не участвуем ───────────────
+  /tenders/{tenderId}/decision:
+    put:
+      tags: [Decisions]
+      summary: Зафиксировать решение об участии
+      parameters:
+        - $ref: "#/components/parameters/TenderId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DecisionInput"
+      responses:
+        "200":
+          description: Решение сохранено (записан аудит)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Decision"
+
+  # ─────────────── Согласования ───────────────
+  /tenders/{tenderId}/approval-requests:
+    post:
+      tags: [Approvals]
+      summary: Создать заявку на согласование (цепочка сметчик→юрист→тендеровик→владелец)
+      parameters:
+        - $ref: "#/components/parameters/TenderId"
+      responses:
+        "201":
+          description: Заявка создана
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApprovalRequest"
+
+  /approval-requests/{requestId}:
+    get:
+      tags: [Approvals]
+      summary: Статус заявки на согласование
+      parameters:
+        - $ref: "#/components/parameters/RequestId"
+      responses:
+        "200":
+          description: Заявка
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApprovalRequest"
+
+  /approval-requests/{requestId}/steps/{role}:
+    post:
+      tags: [Approvals]
+      summary: Согласование конкретной роли (estimator | lawyer | tender_specialist | owner)
+      parameters:
+        - $ref: "#/components/parameters/RequestId"
+        - name: role
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/ApprovalRole"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApprovalDecision"
+      responses:
+        "200":
+          description: Шаг обновлён
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApprovalRequest"
+
+  /approval-requests/{requestId}/authorize-submission:
+    post:
+      tags: [Approvals]
+      summary: Разблокировать шаг подтверждения подачи (только при всех согласованиях)
+      description: >
+        Возвращает 200 только если все обязательные согласования получены. НЕ
+        отправляет заявку на площадку — лишь разблокирует ручное подтверждение
+        человеком. Иначе 409 с перечнем недостающих согласований.
+      parameters:
+        - $ref: "#/components/parameters/RequestId"
+      responses:
+        "200":
+          description: Подача разблокирована (требуется подтверждение человека)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SubmissionGate"
+        "409":
+          description: Подача запрещена — не все согласования получены
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SubmissionGate"
+
+  # ─────────────── База знаний ───────────────
+  /knowledge/documents:
+    get:
+      tags: [Knowledge]
+      summary: Список документов базы знаний
+      responses:
+        "200":
+          description: Документы
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/KnowledgeDocument"
+    post:
+      tags: [Knowledge]
+      summary: Загрузить документ (метаданные; хранилище — placeholder)
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                title: { type: string }
+                kind: { type: string }
+                file: { type: string, format: binary }
+      responses:
+        "201":
+          description: Документ создан и поставлен в очередь на индексацию
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KnowledgeDocument"
+
+  # ─────────────── CRM ───────────────
+  /crm/pipeline:
+    get:
+      tags: [CRM]
+      summary: Элементы CRM-воронки
+      parameters:
+        - { name: stage, in: query, schema: { $ref: "#/components/schemas/CrmStage" } }
+      responses:
+        "200":
+          description: Элементы воронки
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CrmItem"
+  /crm/pipeline/{itemId}/stage:
+    put:
+      tags: [CRM]
+      summary: Переместить элемент по воронке (проверка допустимости перехода)
+      parameters:
+        - name: itemId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [stage]
+              properties:
+                stage: { $ref: "#/components/schemas/CrmStage" }
+      responses:
+        "200":
+          description: Перемещено
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CrmItem"
+        "409":
+          description: Недопустимый переход воронки
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /crm/stats:
+    get:
+      tags: [CRM]
+      summary: Статистика воронки (счётчики по стадиям, конверсии)
+      responses:
+        "200":
+          description: Статистика
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CrmStats"
+
+  # ─────────────── Поддержка ───────────────
+  /support/chat:
+    post:
+      tags: [Support]
+      summary: AI-чат поддержки
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [message]
+              properties:
+                conversationId: { type: string, format: uuid }
+                message: { type: string }
+      responses:
+        "200":
+          description: Ответ ассистента
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SupportReply"
+  /support/tickets:
+    post:
+      tags: [Support]
+      summary: Эскалация диалога в тикет
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [subject]
+              properties:
+                conversationId: { type: string, format: uuid }
+                subject: { type: string }
+                priority: { type: string, enum: [low, normal, high] }
+      responses:
+        "201":
+          description: Тикет создан
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SupportTicket"
+
+  # ─────────────── Реклама ───────────────
+  /ads/slots/{slotCode}/serve:
+    get:
+      tags: [Ads]
+      summary: Получить баннер для слота (ротация) + запись показа
+      parameters:
+        - name: slotCode
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Выбранный баннер
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdBanner"
+        "204":
+          description: Нет доступных кампаний
+  /ads/campaigns/{campaignId}/click:
+    post:
+      tags: [Ads]
+      summary: Зафиксировать клик по баннеру
+      parameters:
+        - name: campaignId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "202": { description: Клик записан }
+
+  # ─────────────── Интеграции и статусы ───────────────
+  /integrations:
+    get:
+      tags: [Integrations]
+      summary: Список интеграций и их статусы
+      responses:
+        "200":
+          description: Интеграции
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Integration"
+  /integrations/{kind}/status:
+    get:
+      tags: [Integrations]
+      summary: Статус интеграции (bitrix24 | email | procurement_platform | openai)
+      parameters:
+        - name: kind
+          in: path
+          required: true
+          schema: { $ref: "#/components/schemas/IntegrationKind" }
+      responses:
+        "200":
+          description: Статус
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Integration"
+
+  # ─────────────── Мониторинг и уведомления ───────────────
+  /monitoring/rules:
+    get:
+      tags: [Monitoring]
+      summary: Правила мониторинга
+      responses:
+        "200":
+          description: Правила
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/MonitoringRule" }
+    post:
+      tags: [Monitoring]
+      summary: Создать правило мониторинга (фильтр + предупреждение о сроке)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MonitoringRuleInput" }
+      responses:
+        "201":
+          description: Правило создано
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MonitoringRule" }
+  /notifications:
+    get:
+      tags: [Monitoring]
+      summary: Уведомления пользователя (в т.ч. о приближении сроков)
+      responses:
+        "200":
+          description: Уведомления
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Notification" }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    TenderId:
+      name: tenderId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    RequestId:
+      name: requestId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+
+  responses:
+    NotFound:
+      description: Не найдено
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error: { type: string }
+        details: { type: object, additionalProperties: true }
+
+    JobAccepted:
+      type: object
+      properties:
+        jobId: { type: string }
+        kind: { type: string, enum: [ingest, parse, enrich, score, pricing, monitor, notify] }
+
+    OnboardingSurvey:
+      type: object
+      properties:
+        questions:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              text: { type: string }
+              type: { type: string, enum: [text, single, multi, number] }
+              options: { type: array, items: { type: string } }
+    OnboardingAnswers:
+      type: object
+      required: [organizationName, answers]
+      properties:
+        organizationName: { type: string }
+        inn: { type: string }
+        answers: { type: object, additionalProperties: true }
+    CompanyProfile:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        legalName: { type: string }
+        okvedCodes: { type: array, items: { type: string } }
+        regions: { type: array, items: { type: string } }
+        capabilities: { type: array, items: { type: string } }
+
+    TenderStatus:
+      type: string
+      enum: [new, ingested, parsed, enriched, scored, in_review, decided, archived]
+    Tender:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        externalId: { type: string }
+        title: { type: string }
+        customerName: { type: string }
+        region: { type: string }
+        law: { type: string }
+        startPrice: { type: number }
+        currency: { type: string }
+        deadlineAt: { type: string, format: date-time }
+        status: { $ref: "#/components/schemas/TenderStatus" }
+        score: { type: number }
+    TenderPage:
+      type: object
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/Tender" } }
+        page: { type: integer }
+        pageSize: { type: integer }
+        total: { type: integer }
+    TenderCard:
+      allOf:
+        - $ref: "#/components/schemas/Tender"
+        - type: object
+          properties:
+            lots:
+              type: array
+              items:
+                type: object
+                properties:
+                  lotNumber: { type: integer }
+                  title: { type: string }
+                  startPrice: { type: number }
+            documents:
+              type: array
+              items:
+                type: object
+                properties:
+                  title: { type: string }
+                  uri: { type: string }
+            winnerHistory:
+              type: array
+              items: { $ref: "#/components/schemas/WinnerRecord" }
+    TenderSearchQuery:
+      type: object
+      properties:
+        keywords: { type: array, items: { type: string } }
+        regions: { type: array, items: { type: string } }
+        okpd2: { type: array, items: { type: string } }
+        minPrice: { type: number }
+        maxPrice: { type: number }
+        limit: { type: integer }
+    WinnerRecord:
+      type: object
+      properties:
+        winnerName: { type: string }
+        winnerInn: { type: string }
+        finalPrice: { type: number }
+        discountPct: { type: number }
+
+    PricingRequest:
+      type: object
+      required: [lineItems]
+      properties:
+        lineItems:
+          type: array
+          items:
+            type: object
+            required: [name, qty, unitCost]
+            properties:
+              name: { type: string }
+              qty: { type: number }
+              unitCost: { type: number }
+        pricingRuleId: { type: string, format: uuid }
+    PriceStrategy:
+      type: string
+      enum: [aggressive, balanced, premium]
+    PricingResult:
+      type: object
+      properties:
+        cost:
+          type: object
+          properties:
+            directCost: { type: number }
+            overhead: { type: number }
+            tax: { type: number }
+            totalCost: { type: number }
+        scenarios:
+          type: array
+          items:
+            type: object
+            properties:
+              strategy: { $ref: "#/components/schemas/PriceStrategy" }
+              price: { type: number }
+              marginPct: { type: number }
+              flooredToMinMargin: { type: boolean }
+              winProbabilityPct: { type: number }
+
+    DecisionInput:
+      type: object
+      required: [decision]
+      properties:
+        decision: { type: string, enum: [participate, decline, undecided] }
+        chosenScenario: { $ref: "#/components/schemas/PriceStrategy" }
+        rationale: { type: string }
+    Decision:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        tenderId: { type: string, format: uuid }
+        decision: { type: string }
+        decidedAt: { type: string, format: date-time }
+
+    ApprovalRole:
+      type: string
+      enum: [estimator, lawyer, tender_specialist, owner]
+    ApprovalStatus:
+      type: string
+      enum: [pending, approved, rejected, changes_requested]
+    ApprovalDecision:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string, enum: [approved, rejected, changes_requested] }
+        comment: { type: string }
+    ApprovalRequest:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        tenderId: { type: string, format: uuid }
+        status: { type: string, enum: [draft, in_progress, approved, rejected, cancelled] }
+        steps:
+          type: array
+          items:
+            type: object
+            properties:
+              role: { $ref: "#/components/schemas/ApprovalRole" }
+              order: { type: integer }
+              required: { type: boolean }
+              status: { $ref: "#/components/schemas/ApprovalStatus" }
+    SubmissionGate:
+      type: object
+      properties:
+        allowed: { type: boolean }
+        missing: { type: array, items: { $ref: "#/components/schemas/ApprovalRole" } }
+        rejected: { type: array, items: { $ref: "#/components/schemas/ApprovalRole" } }
+        note:
+          type: string
+          example: "Требуется подтверждение человека; система не подаёт заявку автоматически."
+
+    KnowledgeDocument:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string }
+        kind: { type: string }
+        mimeType: { type: string }
+        sizeBytes: { type: integer }
+        createdAt: { type: string, format: date-time }
+
+    CrmStage:
+      type: string
+      enum: [lead, qualification, analysis, pricing, approval, submitted, won, lost]
+    CrmItem:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string }
+        stage: { $ref: "#/components/schemas/CrmStage" }
+        amount: { type: number }
+        tenderId: { type: string, format: uuid }
+    CrmStats:
+      type: object
+      properties:
+        byStage:
+          type: object
+          additionalProperties: { type: integer }
+        conversion:
+          type: object
+          properties:
+            leadToWon: { type: number }
+            submittedToWon: { type: number }
+        winRatePct: { type: number }
+
+    SupportReply:
+      type: object
+      properties:
+        conversationId: { type: string, format: uuid }
+        reply: { type: string }
+        canEscalate: { type: boolean }
+    SupportTicket:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        subject: { type: string }
+        status: { type: string, enum: [open, pending, resolved, closed] }
+        priority: { type: string }
+
+    AdBanner:
+      type: object
+      properties:
+        campaignId: { type: string, format: uuid }
+        advertiser: { type: string }
+        title: { type: string }
+        imageUri: { type: string }
+        targetUrl: { type: string }
+        impressionId: { type: string, format: uuid }
+
+    IntegrationKind:
+      type: string
+      enum: [bitrix24, email, procurement_platform, openai]
+    Integration:
+      type: object
+      properties:
+        kind: { $ref: "#/components/schemas/IntegrationKind" }
+        title: { type: string }
+        status:
+          type: string
+          enum: [not_configured, configured, connected, error, disabled]
+        configPlaceholders: { type: object, additionalProperties: true }
+        lastCheckedAt: { type: string, format: date-time }
+
+    MonitoringRuleInput:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string }
+        filter: { type: object, additionalProperties: true }
+        deadlineWarningDays: { type: integer, default: 3 }
+    MonitoringRule:
+      allOf:
+        - $ref: "#/components/schemas/MonitoringRuleInput"
+        - type: object
+          properties:
+            id: { type: string, format: uuid }
+            isActive: { type: boolean }
+    Notification:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        channel: { type: string, enum: [email, in_app, telegram, webhook] }
+        title: { type: string }
+        body: { type: string }
+        status: { type: string, enum: [queued, sent, failed, read] }
+        createdAt: { type: string, format: date-time }
