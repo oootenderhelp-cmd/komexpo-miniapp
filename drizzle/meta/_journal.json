@@ -1,0 +1,27 @@
+{
+  "version": "7",
+  "dialect": "mysql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "5",
+      "when": 1785630368764,
+      "tag": "0000_absent_network",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "5",
+      "when": 1785630569072,
+      "tag": "0001_bizarre_korg",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1785633921986,
+      "tag": "0002_wild_clint_barton",
+      "breakpoints": true
+    }
+  ]
+}
