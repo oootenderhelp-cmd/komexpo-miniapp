@@ -1,0 +1,44 @@
+name: Tendrovik Backend CI
+
+on:
+  push:
+    branches: [main, "claude/**"]
+    paths:
+      - "tendrovik-backend/**"
+      - ".github/workflows/tendrovik-backend-ci.yml"
+  pull_request:
+    paths:
+      - "tendrovik-backend/**"
+      - ".github/workflows/tendrovik-backend-ci.yml"
+
+defaults:
+  run:
+    working-directory: tendrovik-backend
+
+jobs:
+  check:
+    name: typecheck → test → build → openapi
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: tendrovik-backend/package-lock.json
+
+      - run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Validate OpenAPI contract
+        run: npm run openapi:validate
