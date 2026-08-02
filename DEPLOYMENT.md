@@ -36,20 +36,17 @@ npm install
 # Database
 DATABASE_URL="mysql://user:password@localhost:3306/komexpo_work"
 
-# OAuth (Manus)
-VITE_APP_ID="your-app-id"
-OAUTH_SERVER_URL="https://api.manus.im"
-VITE_OAUTH_PORTAL_URL="https://manus.im"
+# Authentication
 JWT_SECRET="your-jwt-secret-key"
 
 # Owner Info
 OWNER_OPEN_ID="your-open-id"
 OWNER_NAME="Your Name"
 
-# Manus APIs
-BUILT_IN_FORGE_API_URL="https://api.manus.im"
+# Forge API (LLM, Storage, Maps)
+BUILT_IN_FORGE_API_URL="https://your-forge-api.example.com"
 BUILT_IN_FORGE_API_KEY="your-api-key"
-VITE_FRONTEND_FORGE_API_URL="https://api.manus.im"
+VITE_FRONTEND_FORGE_API_URL="https://your-forge-api.example.com"
 VITE_FRONTEND_FORGE_API_KEY="your-frontend-key"
 
 # Analytics
@@ -281,7 +278,7 @@ mysql -u user -p database_name < backup_20260802.sql
 - [ ] Установлены все переменные окружения
 - [ ] Включен HTTPS
 - [ ] Настроены CORS правила
-- [ ] Включена аутентификация OAuth
+- [ ] Включена JWT аутентификация
 - [ ] Установлены rate limits
 - [ ] Настроены SQL injection защиты (используется ORM)
 - [ ] Включена защита от XSS

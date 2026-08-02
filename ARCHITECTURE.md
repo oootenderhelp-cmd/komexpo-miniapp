@@ -11,7 +11,7 @@ Komexpo Work — фриланс-платформа, аналог Kwork.ru, с р
 | Frontend | React 19 + TypeScript + Tailwind CSS 4 |
 | Backend | Express 4 + tRPC 11 |
 | База данных | MySQL (TiDB) через Drizzle ORM |
-| Аутентификация | Manus OAuth + JWT сессии |
+| Аутентификация | Email/Password + JWT сессии |
 | Файловое хранилище | S3-совместимое хранилище |
 | Сборка | Vite 7 |
 | Тестирование | Vitest |
