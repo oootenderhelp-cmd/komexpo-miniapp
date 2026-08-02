@@ -55,6 +55,19 @@ describe("Ad banner rotation", () => {
     expect(pickWeightedRandom(campaigns, () => 0.99)!.advertiser).toBe("Курсы");
   });
 
+  it("SlotRotator serves only campaigns from its own slot", async () => {
+    const mixed: AdCampaign[] = [
+      { id: "top-a", slotCode: "top", advertiser: "KomExpo", title: "t", weight: 1, status: "active" },
+      { id: "side-a", slotCode: "side", advertiser: "Other", title: "s", weight: 5, status: "active" },
+    ];
+    const rotator = new SlotRotator("top");
+    for (let i = 0; i < 3; i++) {
+      const c = await rotator.serve(mixed);
+      expect(c?.slotCode).toBe("top");
+      expect(c?.advertiser).toBe("KomExpo");
+    }
+  });
+
   it("SlotRotator advances counter and audits each impression", async () => {
     const audit = new InMemoryAuditSink();
     const rotator = new SlotRotator("top", audit);

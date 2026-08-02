@@ -901,7 +901,7 @@ CREATE INDEX IF NOT EXISTS "document_chunks_doc_idx" ON "document_chunks" USING 
 CREATE UNIQUE INDEX IF NOT EXISTS "integrations_ws_kind_uq" ON "integrations" USING btree ("workspace_id","kind");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "jobs_status_idx" ON "jobs" USING btree ("status");--> statement-breakpoint
 CREATE UNIQUE INDEX IF NOT EXISTS "org_registry_inn_uq" ON "organizations_registry" USING btree ("inn");--> statement-breakpoint
-CREATE UNIQUE INDEX IF NOT EXISTS "tenders_source_ext_uq" ON "tenders" USING btree ("source_id","external_id");--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "tenders_ws_source_ext_uq" ON "tenders" USING btree ("workspace_id","source_id","external_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "tenders_status_idx" ON "tenders" USING btree ("status");--> statement-breakpoint
 CREATE UNIQUE INDEX IF NOT EXISTS "users_email_uq" ON "users" USING btree ("email");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "winner_history_inn_idx" ON "winner_history" USING btree ("winner_inn");

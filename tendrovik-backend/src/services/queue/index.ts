@@ -8,7 +8,7 @@
  * anywhere. In production this port can be backed by BullMQ / pg-boss / SQS
  * while keeping the same `JobHandler` contract and stage names.
  */
-import type { AuditSink } from "../../domain/audit.js";
+import type { AuditSink, AuditInput } from "../../domain/audit.js";
 
 export type JobKind = "ingest" | "parse" | "enrich" | "score" | "pricing" | "monitor" | "notify";
 export const JOB_KINDS: JobKind[] = ["ingest", "parse", "enrich", "score", "pricing", "monitor", "notify"];
@@ -70,30 +70,46 @@ export class TaskQueue {
       const job = this.queue.shift()!;
       const handler = this.handlers.get(job.kind);
       if (!handler) continue;
+
+      // Phase 1: run the handler. Only a handler failure triggers a retry.
       try {
         job.attempts += 1;
         await handler(job, ctx);
-        processed += 1;
-        await this.audit?.record({
-          action: "job.completed",
-          entityType: "job",
-          entityId: job.id,
-          metadata: { kind: job.kind },
-        });
       } catch (err) {
         if (job.attempts < this.maxAttempts) {
           this.queue.push(job); // retry
         } else {
           failed += 1;
-          await this.audit?.record({
+          await this.recordSafely({
             action: "job.failed",
             entityType: "job",
             entityId: job.id,
             metadata: { kind: job.kind, error: String(err) },
           });
         }
+        continue;
       }
+
+      // Phase 2: handler already succeeded. A failure to write the completion
+      // audit must NOT re-run the handler — that would duplicate downstream work
+      // (each pipeline stage enqueues its next stage before this point).
+      processed += 1;
+      await this.recordSafely({
+        action: "job.completed",
+        entityType: "job",
+        entityId: job.id,
+        metadata: { kind: job.kind },
+      });
     }
     return { processed, failed };
+  }
+
+  /** Record an audit entry without letting a sink failure escape into job control flow. */
+  private async recordSafely(entry: AuditInput): Promise<void> {
+    try {
+      await this.audit?.record(entry);
+    } catch {
+      /* audit is best-effort here; never re-run a completed handler because of it */
+    }
   }
 }

@@ -351,7 +351,9 @@ export const tenders = pgTable(
     updatedAt: updatedAt(),
   },
   (t) => ({
-    extIdx: uniqueIndex("tenders_source_ext_uq").on(t.sourceId, t.externalId),
+    // Uniqueness is per-workspace: two workspaces may ingest the same public
+    // tender from the same source without colliding (multi-tenant ingestion).
+    extIdx: uniqueIndex("tenders_ws_source_ext_uq").on(t.workspaceId, t.sourceId, t.externalId),
     statusIdx: index("tenders_status_idx").on(t.status),
   }),
 );

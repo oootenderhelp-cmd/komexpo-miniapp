@@ -1,5 +1,5 @@
 {
-  "id": "269f9eca-7261-4634-afab-70faeb73d1b5",
+  "id": "e922327e-e2b6-4a93-acd8-e6ff342d10bb",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -3523,9 +3523,15 @@
         }
       },
       "indexes": {
-        "tenders_source_ext_uq": {
-          "name": "tenders_source_ext_uq",
+        "tenders_ws_source_ext_uq": {
+          "name": "tenders_ws_source_ext_uq",
           "columns": [
+            {
+              "expression": "workspace_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
             {
               "expression": "source_id",
               "isExpression": false,

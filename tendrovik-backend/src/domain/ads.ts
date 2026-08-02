@@ -78,7 +78,11 @@ export class SlotRotator {
   ) {}
 
   async serve(campaigns: AdCampaign[], now: Date = new Date()): Promise<AdCampaign | null> {
-    const picked = rotateWeighted(campaigns, this.counter, now);
+    // Only rotate campaigns that belong to THIS slot, even if the caller passes
+    // a mixed multi-slot list — otherwise we could serve another placement's
+    // banner while recording an impression against this slot.
+    const slotCampaigns = campaigns.filter((c) => c.slotCode === this.slotCode);
+    const picked = rotateWeighted(slotCampaigns, this.counter, now);
     this.counter += 1;
     if (picked && this.audit) {
       await this.audit.record({

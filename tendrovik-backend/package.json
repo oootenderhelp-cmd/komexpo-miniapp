@@ -19,7 +19,7 @@
     "db:studio": "drizzle-kit studio",
     "seed": "tsx src/db/seed.ts",
     "dev": "tsx watch src/index.ts",
-    "start": "node dist/index.js",
+    "start": "node dist/src/index.js",
     "openapi:validate": "node scripts/validate-openapi.mjs"
   },
   "dependencies": {

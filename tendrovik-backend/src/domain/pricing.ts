@@ -23,8 +23,14 @@ export interface PricingRule {
   strategyMarkupPct: Record<PriceStrategy, number>;
 }
 
+/** Read the operator-configured minimum margin floor from env, falling back to 12%. */
+function defaultMinMarginPct(): number {
+  const raw = Number(process.env.DEFAULT_MIN_MARGIN_PCT);
+  return Number.isFinite(raw) && raw >= 0 ? raw : 12;
+}
+
 export const DEFAULT_PRICING_RULE: PricingRule = {
-  minMarginPct: 12,
+  minMarginPct: defaultMinMarginPct(),
   overheadPct: 10,
   taxPct: 20,
   strategyMarkupPct: { aggressive: 5, balanced: 15, premium: 30 },
