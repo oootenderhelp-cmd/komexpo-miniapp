@@ -1,0 +1,166 @@
+import type { CompanyProfile } from "../interfaces/company.js";
+import type { TenderContext } from "../interfaces/tender.js";
+
+const FRESHNESS_DATE = "2026-07-15T10:00:00Z";
+
+export const FIXTURE_CLIENT: CompanyProfile = {
+  inn: "7707083893",
+  name: 'ООО "СтройМонтаж-М"',
+  shortName: "СтройМонтаж-М",
+  ogrn: "1027700132195",
+  okvedMain: "41.20",
+  okvedAdditional: ["43.21", "43.29", "43.31", "43.99"],
+  region: "Москва",
+  registrationDate: "2015-03-12",
+  isActive: true,
+  financials: {
+    annualRevenue: 85_000_000,
+    netProfit: 6_200_000,
+    totalAssets: 42_000_000,
+    totalLiabilities: 18_000_000,
+    employeeCount: 65,
+    reportingYear: 2025,
+    freshness: {
+      fetchedAt: FRESHNESS_DATE,
+      sourceLabel: "Ручной импорт (Rusprofile snapshot)",
+      staleAfterDays: 90,
+    },
+  },
+  pastContracts: [
+    {
+      registryNumber: "0373100011923000101",
+      title: "Капитальный ремонт кровли школы №7",
+      customerName: "ГБОУ Школа №7",
+      contractSum: 14_500_000,
+      currency: "RUB",
+      completedAt: "2025-11-20",
+      law: "44-ФЗ",
+      okpdCodes: ["41.20.40", "43.91.11"],
+      freshness: { fetchedAt: FRESHNESS_DATE, sourceLabel: "ЕИС", staleAfterDays: 30 },
+    },
+    {
+      registryNumber: "0373100011924000055",
+      title: "Ремонт фасада административного здания",
+      customerName: "Администрация Центрального района",
+      contractSum: 22_300_000,
+      currency: "RUB",
+      completedAt: "2026-02-10",
+      law: "44-ФЗ",
+      okpdCodes: ["41.20.40", "43.31.10"],
+      freshness: { fetchedAt: FRESHNESS_DATE, sourceLabel: "ЕИС", staleAfterDays: 30 },
+    },
+    {
+      title: "Монтаж инженерных систем в ТЦ",
+      customerName: 'ООО "Галерея Инвест"',
+      contractSum: 9_800_000,
+      currency: "RUB",
+      completedAt: "2025-06-01",
+      okpdCodes: ["43.21.10"],
+    },
+  ],
+  risks: [
+    {
+      kind: "arbitration",
+      severity: "low",
+      description: "1 арбитражное дело (истец, 250 тыс. руб.)",
+      detectedAt: "2025-09-10",
+      freshness: { fetchedAt: FRESHNESS_DATE, sourceLabel: "Картотека дел", staleAfterDays: 30 },
+    },
+  ],
+  hasAccreditation: null,
+  hasKep: null,
+  freshness: {
+    fetchedAt: FRESHNESS_DATE,
+    sourceLabel: "Ручной импорт (Rusprofile snapshot)",
+    staleAfterDays: 90,
+  },
+};
+
+export const FIXTURE_COMPETITOR_A: CompanyProfile = {
+  inn: "7701234567",
+  name: 'ООО "ТехноСтрой"',
+  ogrn: "1027700555111",
+  okvedMain: "41.20",
+  okvedAdditional: ["43.21", "43.29"],
+  region: "Москва",
+  registrationDate: "2010-06-15",
+  isActive: true,
+  financials: {
+    annualRevenue: 150_000_000,
+    netProfit: 12_000_000,
+    totalAssets: 80_000_000,
+    totalLiabilities: 30_000_000,
+    employeeCount: 120,
+    reportingYear: 2025,
+    freshness: { fetchedAt: FRESHNESS_DATE, sourceLabel: "Ручной импорт", staleAfterDays: 90 },
+  },
+  pastContracts: [
+    {
+      title: "Реконструкция больницы №3",
+      customerName: "Минздрав МО",
+      contractSum: 45_000_000,
+      currency: "RUB",
+      completedAt: "2025-08-01",
+      law: "44-ФЗ",
+      okpdCodes: ["41.20.40"],
+    },
+    {
+      title: "Капремонт школы №22",
+      customerName: "Департамент образования",
+      contractSum: 18_000_000,
+      currency: "RUB",
+      completedAt: "2026-01-15",
+      law: "44-ФЗ",
+      okpdCodes: ["41.20.40", "43.91.11"],
+    },
+  ],
+  risks: [],
+  hasAccreditation: true,
+  hasKep: true,
+  freshness: { fetchedAt: FRESHNESS_DATE, sourceLabel: "Ручной импорт", staleAfterDays: 90 },
+};
+
+export const FIXTURE_COMPETITOR_B: CompanyProfile = {
+  inn: "7709876543",
+  name: 'ИП Сидоров А.В.',
+  okvedMain: "43.31",
+  region: "Москва",
+  registrationDate: "2022-01-10",
+  isActive: true,
+  financials: {
+    annualRevenue: 5_000_000,
+    employeeCount: 3,
+    reportingYear: 2025,
+    freshness: { fetchedAt: FRESHNESS_DATE, sourceLabel: "Ручной импорт", staleAfterDays: 90 },
+  },
+  pastContracts: [],
+  risks: [
+    {
+      kind: "rnp_inclusion",
+      severity: "critical",
+      description: "Включён в РНП (реестр недобросовестных поставщиков)",
+      detectedAt: "2025-04-01",
+    },
+  ],
+  hasAccreditation: null,
+  hasKep: null,
+  freshness: { fetchedAt: FRESHNESS_DATE, sourceLabel: "Ручной импорт", staleAfterDays: 90 },
+};
+
+export const FIXTURE_TENDER: TenderContext = {
+  registryNumber: "0373100011926000042",
+  title: "Капитальный ремонт кровли здания школы №15",
+  description: "Капитальный ремонт мягкой кровли здания школы, включая демонтаж и монтаж",
+  okpdCodes: ["41.20.40", "43.91.11"],
+  law: "44-ФЗ",
+  startPrice: 12_500_000,
+  currency: "RUB",
+  region: "Москва",
+  customerName: "ГБОУ Школа №15",
+  customerInn: "7707999888",
+  deadlineAt: "2026-08-30",
+  requiredLicenses: ["СРО в строительстве"],
+  requiresKep: true,
+  requiresAccreditation: true,
+  freshness: { fetchedAt: FRESHNESS_DATE, sourceLabel: "ЕИС", staleAfterDays: 7 },
+};
