@@ -12,6 +12,7 @@ export const users = mysqlTable("users", {
   isKomekspoEmployee: boolean("isKomekspoEmployee").default(false).notNull(),
   employeeJobTitle: varchar("employeeJobTitle", { length: 255 }),
   verificationMethod: mysqlEnum("verificationMethod", ["sms", "tinkoff", "sber", "vk", "gosuslugi", "maks", "none"]).default("none").notNull(),
+  passwordHash: varchar("passwordHash", { length: 512 }),
   isVerified: boolean("isVerified").default(false).notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),

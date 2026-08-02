@@ -11,6 +11,7 @@ function createMockContext(overrides: Partial<AuthenticatedUser> = {}): TrpcCont
     email: "test@example.com",
     name: "Test User",
     loginMethod: "email",
+    passwordHash: null,
     role: "user",
     createdAt: new Date(),
     updatedAt: new Date(),

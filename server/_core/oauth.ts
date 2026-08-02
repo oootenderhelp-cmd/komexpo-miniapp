@@ -1,65 +1,153 @@
-import { COOKIE_NAME, ONE_YEAR_MS, OAUTH_STATE_COOKIE, decodeOAuthState } from "@shared/const";
-import { parse as parseCookieHeader } from "cookie";
+import { COOKIE_NAME, ONE_YEAR_MS } from "@shared/const";
+import crypto from "crypto";
 import type { Express, Request, Response } from "express";
+import { SignJWT } from "jose";
 import * as db from "../db";
 import { getSessionCookieOptions } from "./cookies";
+import { ENV } from "./env";
 import { sdk } from "./sdk";
 
-function getQueryParam(req: Request, key: string): string | undefined {
-  const value = req.query[key];
-  return typeof value === "string" ? value : undefined;
+function hashPassword(password: string, salt: string): string {
+  const hash = crypto.scryptSync(password, salt, 64);
+  return `${salt}:${hash.toString("hex")}`;
+}
+
+function generateSalt(): string {
+  return crypto.randomBytes(16).toString("hex");
+}
+
+function verifyPassword(password: string, storedHash: string): boolean {
+  const [salt, hash] = storedHash.split(":");
+  if (!salt || !hash) return false;
+  const testHash = crypto.scryptSync(password, salt, 64).toString("hex");
+  return hash === testHash;
+}
+
+async function createSessionToken(
+  openId: string,
+  name: string
+): Promise<string> {
+  const secretKey = new TextEncoder().encode(ENV.cookieSecret);
+  const expiresInMs = ONE_YEAR_MS;
+  const expirationSeconds = Math.floor((Date.now() + expiresInMs) / 1000);
+
+  return new SignJWT({
+    openId,
+    appId: ENV.appId,
+    name,
+  })
+    .setProtectedHeader({ alg: "HS256", typ: "JWT" })
+    .setExpirationTime(expirationSeconds)
+    .sign(secretKey);
 }
 
 export function registerOAuthRoutes(app: Express) {
-  app.get("/api/oauth/callback", async (req: Request, res: Response) => {
-    const code = getQueryParam(req, "code");
-    const state = getQueryParam(req, "state");
-
-    if (!code || !state) {
-      res.status(400).json({ error: "code and state are required" });
-      return;
-    }
-
-    // CSRF guard: the nonce in `state` must match the one-time cookie that
-    // startLogin set in the browser that began this login. An attacker can
-    // forge `state`, but cannot plant this cookie in the victim's browser.
-    const { nonce } = decodeOAuthState(state);
-    const expectedNonce = parseCookieHeader(req.headers.cookie ?? "")[OAUTH_STATE_COOKIE];
-    if (!nonce || nonce !== expectedNonce) {
-      res.status(403).json({ error: "invalid oauth state" });
-      return;
-    }
-    res.clearCookie(OAUTH_STATE_COOKIE, { path: "/", secure: true, sameSite: "none" });
-
+  // Register
+  app.post("/api/auth/register", async (req: Request, res: Response) => {
     try {
-      const tokenResponse = await sdk.exchangeCodeForToken(code, state);
-      const userInfo = await sdk.getUserInfo(tokenResponse.accessToken);
+      const { email, password, name } = req.body;
 
-      if (!userInfo.openId) {
-        res.status(400).json({ error: "openId missing from user info" });
+      if (!email || !password) {
+        res.status(400).json({ error: "Email and password are required" });
         return;
       }
 
+      if (password.length < 6) {
+        res
+          .status(400)
+          .json({ error: "Password must be at least 6 characters" });
+        return;
+      }
+
+      // Check if user already exists
+      const existing = await db.getUserByOpenId(email);
+      if (existing) {
+        res.status(409).json({ error: "User with this email already exists" });
+        return;
+      }
+
+      const salt = generateSalt();
+      const passwordHash = hashPassword(password, salt);
+
       await db.upsertUser({
-        openId: userInfo.openId,
-        name: userInfo.name || null,
-        email: userInfo.email ?? null,
-        loginMethod: userInfo.loginMethod ?? userInfo.platform ?? null,
+        openId: email,
+        name: name || null,
+        email: email,
+        loginMethod: "email",
         lastSignedIn: new Date(),
       });
 
-      const sessionToken = await sdk.createSessionToken(userInfo.openId, {
-        name: userInfo.name || "",
-        expiresInMs: ONE_YEAR_MS,
+      // Store password hash
+      await db.updateUserPasswordHash(email, passwordHash);
+
+      const sessionToken = await createSessionToken(email, name || "");
+      const cookieOptions = getSessionCookieOptions(req);
+      res.cookie(COOKIE_NAME, sessionToken, {
+        ...cookieOptions,
+        maxAge: ONE_YEAR_MS,
       });
 
-      const cookieOptions = getSessionCookieOptions(req);
-      res.cookie(COOKIE_NAME, sessionToken, { ...cookieOptions, maxAge: ONE_YEAR_MS });
-
-      res.redirect(302, "/");
+      res.json({ success: true });
     } catch (error) {
-      console.error("[OAuth] Callback failed", error);
-      res.status(500).json({ error: "OAuth callback failed" });
+      console.error("[Auth] Register failed", error);
+      res.status(500).json({ error: "Registration failed" });
+    }
+  });
+
+  // Login
+  app.post("/api/auth/login", async (req: Request, res: Response) => {
+    try {
+      const { email, password } = req.body;
+
+      if (!email || !password) {
+        res.status(400).json({ error: "Email and password are required" });
+        return;
+      }
+
+      const user = await db.getUserByOpenId(email);
+      if (!user) {
+        res.status(401).json({ error: "Invalid email or password" });
+        return;
+      }
+
+      const passwordHash = await db.getUserPasswordHash(email);
+      if (!passwordHash || !verifyPassword(password, passwordHash)) {
+        res.status(401).json({ error: "Invalid email or password" });
+        return;
+      }
+
+      const sessionToken = await createSessionToken(email, user.name || "");
+      const cookieOptions = getSessionCookieOptions(req);
+      res.cookie(COOKIE_NAME, sessionToken, {
+        ...cookieOptions,
+        maxAge: ONE_YEAR_MS,
+      });
+
+      await db.upsertUser({
+        openId: email,
+        lastSignedIn: new Date(),
+      });
+
+      res.json({ success: true });
+    } catch (error) {
+      console.error("[Auth] Login failed", error);
+      res.status(500).json({ error: "Login failed" });
+    }
+  });
+
+  // Get current user
+  app.get("/api/auth/me", async (req: Request, res: Response) => {
+    try {
+      const user = await sdk.authenticateRequest(req);
+      res.json({
+        id: user.id,
+        openId: user.openId,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+      });
+    } catch {
+      res.json(null);
     }
   });
 }

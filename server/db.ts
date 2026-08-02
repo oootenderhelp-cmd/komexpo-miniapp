@@ -50,6 +50,19 @@ export async function getUserByOpenId(openId: string) {
   return result.length > 0 ? result[0] : undefined;
 }
 
+export async function updateUserPasswordHash(openId: string, passwordHash: string): Promise<void> {
+  const db = await getDb();
+  if (!db) { console.warn("[Database] Cannot update password hash: database not available"); return; }
+  await db.update(users).set({ passwordHash }).where(eq(users.openId, openId));
+}
+
+export async function getUserPasswordHash(openId: string): Promise<string | null> {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select({ passwordHash: users.passwordHash }).from(users).where(eq(users.openId, openId)).limit(1);
+  return result[0]?.passwordHash ?? null;
+}
+
 // ============ PROFILES ============
 export async function getProfile(userId: number) {
   const db = await getDb();

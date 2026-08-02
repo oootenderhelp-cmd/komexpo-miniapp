@@ -18,11 +18,14 @@ import AdsCabinet from "./pages/ads/AdsCabinet";
 import ChatPage from "./pages/ChatPage";
 import ProfileSetup from "./pages/ProfileSetup";
 import PaymentPage from "./pages/PaymentPage";
+import AuthPage from "./pages/AuthPage";
 
 function Router() {
   return (
     <Switch>
       <Route path="/" component={Home} />
+      <Route path="/login" component={AuthPage} />
+      <Route path="/register" component={AuthPage} />
       <Route path="/catalog" component={Catalog} />
       <Route path="/catalog/:categorySlug" component={Catalog} />
       <Route path="/kvorka/:id" component={KvorkaDetail} />
