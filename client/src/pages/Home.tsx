@@ -22,10 +22,10 @@ export default function Home() {
           <div className="max-w-3xl mx-auto text-center">
             <Badge variant="secondary" className="mb-4">Безопасная сделка с гарантией</Badge>
             <h1 className="text-4xl lg:text-6xl font-extrabold tracking-tight mb-6">
-              Найдите идеального <span className="text-primary">исполнителя</span> для вашего проекта
+              Найдите идеального <span className="text-primary">исполнителя</span> или <span className="text-primary">заказчика</span>
             </h1>
             <p className="text-lg text-muted-foreground mb-8 max-w-2xl mx-auto">
-              Komexpo Work — фриланс-платформа с безопасными сделками, каталогом услуг и биржей проектов. Гарантируем качество и защиту ваших проектов.
+              Komexpo Work — фриланс-платформа с безопасными сделками, каталогом услуг и биржей проектов. Для заказчиков и исполнителей с личными кабинетами.
             </p>
             <div className="flex flex-col sm:flex-row gap-4 justify-center">
               <Link href="/catalog">
@@ -34,7 +34,7 @@ export default function Home() {
                 </Button>
               </Link>
               <Link href="/projects">
-                <Button size="lg" variant="outline">Разместить проект</Button>
+                <Button size="lg" variant="outline">Найти заказ</Button>
               </Link>
             </div>
           </div>
