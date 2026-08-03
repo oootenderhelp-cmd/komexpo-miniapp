@@ -1,0 +1,44 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: tendrovik
+      POSTGRES_USER: tendrovik
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tendrovik"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  backend:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_URL: postgres://tendrovik:${POSTGRES_PASSWORD}@db:5432/tendrovik
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
+      DEFAULT_MIN_MARGIN_PCT: ${DEFAULT_MIN_MARGIN_PCT:-12}
+    volumes:
+      - uploads:/app/data/uploads
+    ports:
+      - "127.0.0.1:3000:3000"
+
+volumes:
+  pgdata:
+    driver: local
+  uploads:
+    driver: local
