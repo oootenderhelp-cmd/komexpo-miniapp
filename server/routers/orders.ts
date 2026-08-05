@@ -3,7 +3,7 @@ import { router, protectedProcedure } from "../_core/trpc";
 import * as db from "../db";
 import { nanoid } from "nanoid";
 
-const COMMISSION_RATE = 0.20;
+const COMMISSION_RATE = 0.15;
 
 export const ordersRouter = router({
   myAsCustomer: protectedProcedure.query(async ({ ctx }) => {

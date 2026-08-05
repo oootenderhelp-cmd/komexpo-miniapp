@@ -156,6 +156,14 @@ describe("Admin Router", () => {
     expect(result).toHaveProperty("items");
     expect(result).toHaveProperty("total");
   });
+
+  it("admin.users works for owner", async () => {
+    const ctx = createOwnerContext();
+    const caller = appRouter.createCaller(ctx);
+    const result = await caller.admin.users({});
+    expect(result).toHaveProperty("items");
+    expect(result).toHaveProperty("total");
+  });
 });
 
 describe("Owner Router", () => {
@@ -181,22 +189,22 @@ describe("Owner Router", () => {
 });
 
 describe("Escrow Commission Logic", () => {
-  it("commission rate is 20%", () => {
-    const COMMISSION_RATE = 0.2;
+  it("commission rate is 15%", () => {
+    const COMMISSION_RATE = 0.15;
     const orderAmount = 10000;
     const commission = orderAmount * COMMISSION_RATE;
     const contractorReceives = orderAmount - commission;
-    
-    expect(commission).toBe(2000);
-    expect(contractorReceives).toBe(8000);
+
+    expect(commission).toBe(1500);
+    expect(contractorReceives).toBe(8500);
   });
 
   it("commission is correctly calculated for various amounts", () => {
-    const COMMISSION_RATE = 0.2;
+    const COMMISSION_RATE = 0.15;
     const testCases = [
-      { amount: 500, expectedCommission: 100 },
-      { amount: 1500, expectedCommission: 300 },
-      { amount: 50000, expectedCommission: 10000 },
+      { amount: 500, expectedCommission: 75 },
+      { amount: 1500, expectedCommission: 225 },
+      { amount: 50000, expectedCommission: 7500 },
     ];
 
     testCases.forEach(({ amount, expectedCommission }) => {

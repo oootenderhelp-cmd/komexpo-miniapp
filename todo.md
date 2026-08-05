@@ -72,7 +72,7 @@
 - [x] Ad placement across platform
 
 ## System Features
-- [x] Escrow with 20% commission
+- [x] Escrow with 15% commission
 - [x] Milestone-based payments
 - [x] Dispute arbitration
 - [x] Fund withdrawal system
@@ -86,23 +86,23 @@
 ## Phase 2 - Detailed Requirements Implementation
 
 ### Commission & Financial
-- [ ] Change commission from 20% to 15%
-- [ ] Implement fund holding (escrow) until work acceptance
-- [ ] Internal user balance system
+- [x] Change commission from 20% to 15%
+- [x] Implement fund holding (escrow) until work acceptance
+- [x] Internal user balance system
 
 ### Verification System
-- [ ] SMS verification (stub)
-- [ ] Tinkoff ID verification (stub)
-- [ ] Sber ID verification (stub)
-- [ ] VK verification (stub)
-- [ ] Gosuslugi verification (stub)
-- [ ] MAKS verification (stub)
+- [x] SMS verification (stub)
+- [x] Tinkoff ID verification (stub)
+- [x] Sber ID verification (stub)
+- [x] VK verification (stub)
+- [x] Gosuslugi verification (stub)
+- [x] MAKS verification (stub)
 
 ### Payment Systems
-- [ ] Prodamus integration (stub)
-- [ ] PayKeeper integration (stub)
-- [ ] SPB integration (stub)
-- [ ] AliPay integration (stub)
+- [x] Prodamus integration (stub)
+- [x] PayKeeper integration (stub)
+- [x] SPB integration (stub)
+- [x] AliPay integration (stub)
 
 ### Advertising Cabinet
 - [ ] Ad tariffs management

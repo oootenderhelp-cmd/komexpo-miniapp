@@ -119,8 +119,8 @@ komexpo_work/
 
 ### Комиссия
 
-- Фиксированная ставка: **20%**
-- Формула: `commission = amount × 0.20`
+- Фиксированная ставка: **15%**
+- Формула: `commission = amount × 0.15`
 - Подрядчик получает: `contractorPayout = amount - commission`
 
 ### Статусы заказа
