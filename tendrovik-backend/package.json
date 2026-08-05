@@ -1,0 +1,37 @@
+{
+  "name": "tendrovik-backend",
+  "version": "0.1.0",
+  "description": "Backend foundation for the Тендровик AI cloud platform (portable module).",
+  "type": "module",
+  "private": true,
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:push": "drizzle-kit push",
+    "db:studio": "drizzle-kit studio",
+    "seed": "tsx src/db/seed.ts",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/src/index.js",
+    "openapi:validate": "node scripts/validate-openapi.mjs"
+  },
+  "dependencies": {
+    "drizzle-orm": "^0.36.4",
+    "postgres": "^3.4.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "drizzle-kit": "^0.28.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8",
+    "yaml": "^2.6.1"
+  }
+}

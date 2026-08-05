@@ -1,0 +1,6 @@
+[Unit]
+Description=Tendrovik database backup
+
+[Service]
+Type=oneshot
+ExecStart=/opt/tendrovik/deploy/scripts/backup.sh

@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.env
+*.log
+coverage/
+.drizzle/
+drizzle/meta/_journal_backup*
+.DS_Store

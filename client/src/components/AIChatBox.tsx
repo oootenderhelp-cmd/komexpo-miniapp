@@ -2,8 +2,9 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
-import { Loader2, Send, User, Sparkles } from "lucide-react";
+import { Loader2, Send, User, Sparkles, Mic, MicOff } from "lucide-react";
 import { useState, useEffect, useRef } from "react";
+import { useVoiceInput } from "@/hooks/useVoiceInput";
 import { Streamdown } from "streamdown";
 
 /**
@@ -125,6 +126,16 @@ export function AIChatBox({
   const containerRef = useRef<HTMLDivElement>(null);
   const inputAreaRef = useRef<HTMLFormElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const voice = useVoiceInput("ru-RU");
+
+  useEffect(() => {
+    if (voice.transcript) {
+      setInput((prev) => (prev ? prev + " " + voice.transcript : voice.transcript));
+      voice.reset();
+      textareaRef.current?.focus();
+    }
+  }, [voice.transcript]);
 
   // Filter out system messages
   const displayMessages = messages.filter((msg) => msg.role !== "system");
@@ -310,13 +321,35 @@ export function AIChatBox({
       >
         <Textarea
           ref={textareaRef}
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
+          value={input + (voice.interimTranscript ? (input ? " " : "") + voice.interimTranscript : "")}
+          onChange={(e) => {
+            if (!voice.isListening) setInput(e.target.value);
+          }}
           onKeyDown={handleKeyDown}
           placeholder={placeholder}
           className="flex-1 max-h-32 resize-none min-h-9"
           rows={1}
         />
+        {voice.isSupported && (
+          <Button
+            type="button"
+            size="icon"
+            variant={voice.isListening ? "destructive" : "outline"}
+            onClick={voice.toggle}
+            disabled={isLoading}
+            className={cn(
+              "shrink-0 h-[38px] w-[38px] transition-all",
+              voice.isListening && "animate-pulse"
+            )}
+            title={voice.isListening ? "Остановить запись" : "Голосовой ввод"}
+          >
+            {voice.isListening ? (
+              <MicOff className="size-4" />
+            ) : (
+              <Mic className="size-4" />
+            )}
+          </Button>
+        )}
         <Button
           type="submit"
           size="icon"
@@ -330,6 +363,9 @@ export function AIChatBox({
           )}
         </Button>
       </form>
+      {voice.error && (
+        <div className="px-4 pb-2 text-xs text-destructive">{voice.error}</div>
+      )}
     </div>
   );
 }
