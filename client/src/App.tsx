@@ -19,6 +19,8 @@ import ChatPage from "./pages/ChatPage";
 import ProfileSetup from "./pages/ProfileSetup";
 import PaymentPage from "./pages/PaymentPage";
 import AuthPage from "./pages/AuthPage";
+import DentalBooking from "./pages/dental/DentalBooking";
+import DentalLeads from "./pages/dental/DentalLeads";
 
 function Router() {
   return (
@@ -41,6 +43,8 @@ function Router() {
       <Route path="/chat/:userId" component={ChatPage} />
       <Route path="/profile/setup" component={ProfileSetup} />
       <Route path="/payments" component={PaymentPage} />
+      <Route path="/dental" component={DentalBooking} />
+      <Route path="/dental/leads" component={DentalLeads} />
       <Route path="/404" component={NotFound} />
       <Route component={NotFound} />
     </Switch>

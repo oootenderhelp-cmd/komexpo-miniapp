@@ -1,6 +1,6 @@
 import { eq, desc, asc, and, like, sql, or, inArray } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
-import { InsertUser, users, userProfiles, categories, kvorki, projects, projectResponses, orders, orderMilestones, transactions, reviews, chatMessages, favorites, notifications, disputes, adBanners } from "../drizzle/schema";
+import { InsertUser, users, userProfiles, categories, kvorki, projects, projectResponses, orders, orderMilestones, transactions, reviews, chatMessages, favorites, notifications, disputes, adBanners, dentalLeads, dentalLeadEvents } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
 let _db: ReturnType<typeof drizzle> | null = null;
@@ -370,4 +370,147 @@ export async function createAd(data: typeof adBanners.$inferInsert) {
   if (!db) return undefined;
   const result = await db.insert(adBanners).values(data);
   return result[0].insertId;
+}
+
+// ============ СТОМАТОЛОГИЧЕСКИЕ ЛИДЫ (DAREMA) ============
+
+export type DentalLeadFilters = {
+  status?: string;
+  urgencyTier?: string;
+  serviceSlug?: string;
+  from?: Date;
+  to?: Date;
+  search?: string;
+  limit?: number;
+  offset?: number;
+};
+
+function dentalLeadConditions(filters?: DentalLeadFilters) {
+  const conditions: any[] = [];
+  if (filters?.status) conditions.push(eq(dentalLeads.status, filters.status as any));
+  if (filters?.urgencyTier) conditions.push(eq(dentalLeads.urgencyTier, filters.urgencyTier as any));
+  if (filters?.serviceSlug) conditions.push(eq(dentalLeads.serviceSlug, filters.serviceSlug));
+  if (filters?.from) conditions.push(sql`${dentalLeads.createdAt} >= ${filters.from}`);
+  if (filters?.to) conditions.push(sql`${dentalLeads.createdAt} <= ${filters.to}`);
+  if (filters?.search) {
+    const term = `%${filters.search}%`;
+    conditions.push(
+      or(
+        like(dentalLeads.name, term),
+        like(dentalLeads.phone, term),
+        like(dentalLeads.email, term),
+        like(dentalLeads.messengerHandle, term),
+        like(dentalLeads.publicId, term),
+      ),
+    );
+  }
+  return conditions.length > 0 ? and(...conditions) : undefined;
+}
+
+export async function createDentalLead(data: typeof dentalLeads.$inferInsert) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.insert(dentalLeads).values(data);
+  const leadId = result[0].insertId;
+  if (leadId) {
+    await db.insert(dentalLeadEvents).values({
+      leadId: Number(leadId),
+      type: "created",
+      toStatus: data.status ?? "new",
+      body: `Заявка получена, источник: ${data.sourceChannel ?? "не указан"}`,
+    });
+  }
+  return leadId;
+}
+
+export async function getDentalLeads(filters?: DentalLeadFilters) {
+  const db = await getDb();
+  if (!db) return { items: [] as (typeof dentalLeads.$inferSelect)[], total: 0 };
+  const where = dentalLeadConditions(filters);
+  const [items, countResult] = await Promise.all([
+    db
+      .select()
+      .from(dentalLeads)
+      .where(where)
+      // Очередь на связь: сначала самые срочные, среди равных — свежие.
+      .orderBy(desc(dentalLeads.urgencyScore), desc(dentalLeads.createdAt))
+      .limit(filters?.limit ?? 50)
+      .offset(filters?.offset ?? 0),
+    db.select({ count: sql<number>`count(*)` }).from(dentalLeads).where(where),
+  ]);
+  return { items, total: Number(countResult[0]?.count || 0) };
+}
+
+/** Полная выборка под выгрузку в Excel — без пагинации, но с потолком. */
+export async function getDentalLeadsForExport(filters?: DentalLeadFilters, cap = 20000) {
+  const db = await getDb();
+  if (!db) return [] as (typeof dentalLeads.$inferSelect)[];
+  return db
+    .select()
+    .from(dentalLeads)
+    .where(dentalLeadConditions(filters))
+    .orderBy(desc(dentalLeads.createdAt))
+    .limit(cap);
+}
+
+export async function getDentalLeadById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(dentalLeads).where(eq(dentalLeads.id, id)).limit(1);
+  return result[0] || undefined;
+}
+
+export async function getDentalLeadByPublicId(publicId: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(dentalLeads).where(eq(dentalLeads.publicId, publicId)).limit(1);
+  return result[0] || undefined;
+}
+
+export async function updateDentalLead(id: number, data: Partial<typeof dentalLeads.$inferInsert>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(dentalLeads).set(data).where(eq(dentalLeads.id, id));
+}
+
+export async function addDentalLeadEvent(data: typeof dentalLeadEvents.$inferInsert) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.insert(dentalLeadEvents).values(data);
+  return result[0].insertId;
+}
+
+export async function getDentalLeadEvents(leadId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db
+    .select()
+    .from(dentalLeadEvents)
+    .where(eq(dentalLeadEvents.leadId, leadId))
+    .orderBy(asc(dentalLeadEvents.createdAt));
+}
+
+/** Сводка по дням прямо из БД — для дашборда, без выгрузки всех строк. */
+export async function getDentalDailyStats(days = 30) {
+  const db = await getDb();
+  if (!db) return [] as { day: string; total: number; critical: number; scheduled: number; visited: number }[];
+  const rows = await db
+    .select({
+      day: sql<string>`DATE(${dentalLeads.createdAt})`,
+      total: sql<number>`count(*)`,
+      critical: sql<number>`sum(case when ${dentalLeads.urgencyTier} = 'critical' then 1 else 0 end)`,
+      scheduled: sql<number>`sum(case when ${dentalLeads.status} in ('scheduled','visited') then 1 else 0 end)`,
+      visited: sql<number>`sum(case when ${dentalLeads.status} = 'visited' then 1 else 0 end)`,
+    })
+    .from(dentalLeads)
+    .where(sql`${dentalLeads.createdAt} >= DATE_SUB(CURDATE(), INTERVAL ${days} DAY)`)
+    .groupBy(sql`DATE(${dentalLeads.createdAt})`)
+    .orderBy(sql`DATE(${dentalLeads.createdAt}) DESC`);
+  return rows.map(r => ({
+    day: String(r.day),
+    total: Number(r.total || 0),
+    critical: Number(r.critical || 0),
+    scheduled: Number(r.scheduled || 0),
+    visited: Number(r.visited || 0),
+  }));
 }

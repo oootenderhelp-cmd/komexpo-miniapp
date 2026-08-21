@@ -1,4 +1,4 @@
-import { int, mysqlEnum, mysqlTable, text, timestamp, varchar, decimal, boolean, json } from "drizzle-orm/mysql-core";
+import { int, index, mysqlEnum, mysqlTable, text, timestamp, varchar, decimal, boolean, json } from "drizzle-orm/mysql-core";
 
 // ============ USERS ============
 export const users = mysqlTable("users", {
@@ -281,3 +281,80 @@ export type Favorite = typeof favorites.$inferSelect;
 export type Notification = typeof notifications.$inferSelect;
 export type Dispute = typeof disputes.$inferSelect;
 export type AdBanner = typeof adBanners.$inferSelect;
+
+// ============ СТОМАТОЛОГИЧЕСКИЕ ЛИДЫ (DAREMA) ============
+// Заявки, которые человек оставил сам через форму записи. Контакты хранятся
+// только вместе с отметками согласия (152-ФЗ / 38-ФЗ) и источником обращения.
+
+export const dentalLeads = mysqlTable("dental_leads", {
+  id: int("id").autoincrement().primaryKey(),
+  publicId: varchar("publicId", { length: 32 }).notNull().unique(),
+
+  // Контакты — из формы, заполненной самим человеком
+  name: varchar("name", { length: 255 }).notNull(),
+  phone: varchar("phone", { length: 32 }).notNull(),
+  email: varchar("email", { length: 320 }),
+  messengerType: mysqlEnum("messengerType", ["telegram", "max", "vk", "whatsapp", "none"]).default("none").notNull(),
+  messengerHandle: varchar("messengerHandle", { length: 255 }),
+  city: varchar("city", { length: 128 }).default("Санкт-Петербург").notNull(),
+
+  // Запрос
+  serviceSlug: varchar("serviceSlug", { length: 64 }).notNull(),
+  comment: text("comment"),
+  painLevel: int("painLevel").default(0).notNull(),
+  symptoms: json("symptoms"),
+  readiness: mysqlEnum("readiness", ["today", "this_week", "this_month", "researching"]).default("researching").notNull(),
+
+  // Рейтинг срочности
+  urgencyScore: int("urgencyScore").default(0).notNull(),
+  urgencyTier: mysqlEnum("urgencyTier", ["critical", "high", "medium", "low"]).default("low").notNull(),
+  urgencyReasons: json("urgencyReasons"),
+
+  // Источник: «где поймали» — метки кампании, а не слежка за человеком
+  sourceChannel: varchar("sourceChannel", { length: 64 }),
+  utmSource: varchar("utmSource", { length: 128 }),
+  utmMedium: varchar("utmMedium", { length: 128 }),
+  utmCampaign: varchar("utmCampaign", { length: 255 }),
+  utmContent: varchar("utmContent", { length: 255 }),
+  utmTerm: varchar("utmTerm", { length: 255 }),
+  landingPath: varchar("landingPath", { length: 512 }),
+
+  // Согласия
+  consentPd: boolean("consentPd").default(false).notNull(),
+  consentMarketing: boolean("consentMarketing").default(false).notNull(),
+  consentAt: timestamp("consentAt"),
+  consentText: varchar("consentText", { length: 64 }),
+  optedOut: boolean("optedOut").default(false).notNull(),
+  optedOutAt: timestamp("optedOutAt"),
+
+  // Воронка
+  status: mysqlEnum("status", ["new", "contacted", "scheduled", "visited", "no_answer", "rejected", "spam"]).default("new").notNull(),
+  assignedToUserId: int("assignedToUserId"),
+  firstTouchAt: timestamp("firstTouchAt"),
+  visitAt: timestamp("visitAt"),
+
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, table => [
+  // Кабинет всегда сортирует очередь по срочности и режет выборку по дате,
+  // статусу и направлению — без этих индексов растёт full scan.
+  index("dental_leads_queue_idx").on(table.urgencyScore, table.createdAt),
+  index("dental_leads_status_idx").on(table.status),
+  index("dental_leads_created_idx").on(table.createdAt),
+  index("dental_leads_service_idx").on(table.serviceSlug),
+  index("dental_leads_phone_idx").on(table.phone),
+]);
+
+export const dentalLeadEvents = mysqlTable("dental_lead_events", {
+  id: int("id").autoincrement().primaryKey(),
+  leadId: int("leadId").notNull(),
+  type: mysqlEnum("type", ["created", "status_change", "message_sent", "note", "opt_out"]).default("note").notNull(),
+  fromStatus: varchar("fromStatus", { length: 32 }),
+  toStatus: varchar("toStatus", { length: 32 }),
+  channel: varchar("channel", { length: 32 }),
+  body: text("body"),
+  actorUserId: int("actorUserId"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, table => [
+  index("dental_lead_events_lead_idx").on(table.leadId, table.createdAt),
+]);
