@@ -53,6 +53,7 @@ import {
   type Symptom,
   type UrgencyTier,
 } from "@shared/dental";
+import { MILLION_CITIES } from "@shared/cities";
 
 const SYMPTOMS: Symptom[] = [
   "acute_pain",
@@ -391,12 +392,20 @@ export default function DentalBooking() {
                     </SelectContent>
                   </Select>
                 ) : (
-                  <Input
-                    id="city"
-                    value={city}
-                    onChange={e => setCity(e.target.value)}
-                    placeholder="Например: Казань"
-                  />
+                  <>
+                    <Input
+                      id="city"
+                      list="booking-cities"
+                      value={city}
+                      onChange={e => setCity(e.target.value)}
+                      placeholder="Например: Казань"
+                    />
+                    <datalist id="booking-cities">
+                      {MILLION_CITIES.map(c => (
+                        <option key={c.name} value={c.name} />
+                      ))}
+                    </datalist>
+                  </>
                 )}
               </div>
 

@@ -43,6 +43,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { PARTNER_STATUS_LABELS } from "@shared/dental";
+import { MILLION_CITIES, regionOf } from "@shared/cities";
 
 const STATUS_STYLES: Record<string, string> = {
   active: "bg-emerald-100 text-emerald-800 border-emerald-200",
@@ -146,10 +147,22 @@ export default function PartnersPanel() {
                   <Label htmlFor="p-city">Город</Label>
                   <Input
                     id="p-city"
+                    list="million-cities"
                     value={city}
                     onChange={e => setCity(e.target.value)}
                     placeholder="Казань"
                   />
+                  {/* Миллионники подсказкой: регион подставится сам. */}
+                  <datalist id="million-cities">
+                    {MILLION_CITIES.map(c => (
+                      <option key={c.name} value={c.name} />
+                    ))}
+                  </datalist>
+                  {regionOf(city) && (
+                    <p className="text-xs text-slate-500">
+                      Регион: {regionOf(city)}
+                    </p>
+                  )}
                 </div>
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div className="space-y-2">
@@ -202,6 +215,7 @@ export default function PartnersPanel() {
                     createPartner.mutate({
                       name: name.trim(),
                       city: city.trim(),
+                      region: regionOf(city) ?? undefined,
                       contactPhone: contactPhone.trim() || undefined,
                       contactEmail: contactEmail.trim() || undefined,
                       pricePerVisit: Number(pricePerVisit) || undefined,
