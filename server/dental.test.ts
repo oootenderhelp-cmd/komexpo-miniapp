@@ -4,7 +4,9 @@ import {
   DENTAL_SERVICES,
   buildFirstTouchMessage,
   canContact,
+  formatSlaLabel,
   getService,
+  getSlaState,
   scoreUrgency,
 } from "@shared/dental";
 import { buildXlsx, columnLetter, safeSheetName } from "./lib/xlsx";
@@ -186,6 +188,73 @@ describe("право на переписку", () => {
   });
 });
 
+describe("контроль SLA", () => {
+  const created = new Date("2026-08-21T10:00:00Z");
+
+  it("считает остаток до срока первого касания", () => {
+    const state = getSlaState(
+      { urgencyTier: "critical", status: "new", createdAt: created },
+      new Date("2026-08-21T10:05:00Z")
+    );
+    expect(state.minutesLeft).toBe(10);
+    expect(state.breached).toBe(false);
+    expect(state.running).toBe(true);
+    expect(formatSlaLabel(state)).toBe("осталось 10 мин");
+  });
+
+  it("помечает просрочку по критичной заявке через 15 минут", () => {
+    const state = getSlaState(
+      { urgencyTier: "critical", status: "new", createdAt: created },
+      new Date("2026-08-21T10:27:00Z")
+    );
+    expect(state.breached).toBe(true);
+    expect(formatSlaLabel(state)).toBe("просрочено на 12 мин");
+  });
+
+  it("останавливает часы в момент касания, а не тикает дальше", () => {
+    const lead = {
+      urgencyTier: "critical",
+      status: "contacted",
+      createdAt: created,
+      firstTouchAt: new Date("2026-08-21T10:05:00Z"),
+    };
+    const soon = getSlaState(lead, new Date("2026-08-21T10:06:00Z"));
+    const muchLater = getSlaState(lead, new Date("2026-08-25T10:00:00Z"));
+    expect(soon.minutesLeft).toBe(muchLater.minutesLeft);
+    expect(muchLater.breached).toBe(false);
+    expect(formatSlaLabel(muchLater)).toBe("в срок");
+  });
+
+  it("фиксирует, что связались с опозданием", () => {
+    const state = getSlaState({
+      urgencyTier: "critical",
+      status: "scheduled",
+      createdAt: created,
+      firstTouchAt: new Date("2026-08-21T11:00:00Z"),
+    });
+    expect(state.breached).toBe(true);
+    expect(state.running).toBe(false);
+  });
+
+  it("у плановой заявки срок сутки, а не 15 минут", () => {
+    const state = getSlaState(
+      { urgencyTier: "low", status: "new", createdAt: created },
+      new Date("2026-08-21T22:00:00Z")
+    );
+    expect(state.breached).toBe(false);
+    expect(state.minutesLeft).toBe(720);
+  });
+
+  it("закрытая без касания заявка не считается просроченной", () => {
+    const state = getSlaState(
+      { urgencyTier: "critical", status: "spam", createdAt: created },
+      new Date("2026-08-25T10:00:00Z")
+    );
+    expect(state.breached).toBe(false);
+    expect(state.running).toBe(false);
+  });
+});
+
 describe("первое сообщение", () => {
   it("содержит имя, лид-магнит и способ отписаться", () => {
     const text = buildFirstTouchMessage({
@@ -348,7 +417,11 @@ describe("выгрузка лидов", () => {
       makeLead({ createdAt: new Date("2026-08-21T09:00:00Z") }),
       makeLead({ createdAt: new Date("2026-08-20T09:00:00Z") }),
     ]);
-    const workbook = unzip(buffer).get("xl/workbook.xml")!;
+    const files = unzip(buffer);
+    expect(files.get("xl/worksheets/sheet2.xml")).toContain(
+      "SLA первого касания"
+    );
+    const workbook = files.get("xl/workbook.xml")!;
     expect(workbook).toContain("Отчёт по дням");
     expect(workbook).toContain("Все лиды");
     expect(workbook).toContain("2026-08-21");
@@ -415,6 +488,30 @@ describe("роутер заявок", () => {
   it("пускает администратора к списку заявок", async () => {
     const caller = appRouter.createCaller(createContext({ role: "admin" }));
     const result = await caller.dental.list({ limit: 10, offset: 0 });
+    expect(result).toEqual({ items: [], total: 0 });
+  });
+
+  it("закрывает отчёт по кампаниям от обычного пользователя", async () => {
+    const caller = appRouter.createCaller(createContext({ role: "user" }));
+    await expect(caller.dental.campaignStats({ days: 30 })).rejects.toThrow(
+      /администратор/i
+    );
+  });
+
+  it("отдаёт администратору счётчик просроченных заявок", async () => {
+    const caller = appRouter.createCaller(createContext({ role: "admin" }));
+    await expect(caller.dental.overdueCount()).resolves.toEqual({ total: 0 });
+  });
+
+  it("принимает фильтр по просроченным заявкам", async () => {
+    const caller = appRouter.createCaller(
+      createContext({ role: "owner" as any })
+    );
+    const result = await caller.dental.list({
+      overdueOnly: true,
+      limit: 10,
+      offset: 0,
+    });
     expect(result).toEqual({ items: [], total: 0 });
   });
 

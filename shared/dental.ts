@@ -279,6 +279,82 @@ export const URGENCY_SLA_MINUTES: Record<UrgencyTier, number> = {
   low: 1440,
 };
 
+// ============ КОНТРОЛЬ SLA ============
+
+/** Статусы, при которых часы SLA уже остановлены — с человеком связались. */
+const SLA_CLOSED_STATUSES = [
+  "contacted",
+  "scheduled",
+  "visited",
+  "rejected",
+  "spam",
+];
+
+export type SlaState = {
+  /** Крайний срок первого касания. */
+  dueAt: Date;
+  /** Минуты до срока; отрицательные — просрочка. */
+  minutesLeft: number;
+  breached: boolean;
+  /** Часы ещё идут: с пациентом не связались и заявку не закрыли. */
+  running: boolean;
+};
+
+/**
+ * Считает, сколько осталось до обещанного времени первого касания.
+ *
+ * Смысл в том, чтобы просроченная заявка была видна менеджеру сама, а не
+ * всплывала на разборе в конце месяца: по договору с клиникой платят за
+ * приход, а приход теряется именно на медленном первом звонке.
+ */
+export function getSlaState(
+  lead: {
+    urgencyTier: string;
+    status: string;
+    createdAt: Date | string;
+    firstTouchAt?: Date | string | null;
+  },
+  now: Date = new Date()
+): SlaState {
+  const created =
+    lead.createdAt instanceof Date ? lead.createdAt : new Date(lead.createdAt);
+  const budget =
+    URGENCY_SLA_MINUTES[lead.urgencyTier as UrgencyTier] ??
+    URGENCY_SLA_MINUTES.low;
+  const dueAt = new Date(created.getTime() + budget * 60_000);
+
+  const touched = Boolean(lead.firstTouchAt);
+  const closed = SLA_CLOSED_STATUSES.indexOf(lead.status) !== -1;
+  const running = !touched && !closed;
+
+  // У закрытой заявки счётчик замирает на моменте касания, а не бежит дальше.
+  const reference = touched
+    ? lead.firstTouchAt instanceof Date
+      ? lead.firstTouchAt
+      : new Date(lead.firstTouchAt as string)
+    : now;
+
+  const minutesLeft = Math.round(
+    (dueAt.getTime() - reference.getTime()) / 60_000
+  );
+
+  return {
+    dueAt,
+    minutesLeft,
+    breached: minutesLeft < 0 && (running || touched),
+    running,
+  };
+}
+
+/** Короткая подпись для кабинета: «просрочено на 12 мин» / «осталось 40 мин». */
+export function formatSlaLabel(state: SlaState): string {
+  const abs = Math.abs(state.minutesLeft);
+  const human = abs < 60 ? `${abs} мин` : `${Math.round(abs / 60)} ч`;
+  if (state.breached) return `просрочено на ${human}`;
+  if (!state.running) return "в срок";
+  return `осталось ${human}`;
+}
+
 // ============ СТАТУСЫ ВОРОНКИ ============
 
 export type LeadStatus =

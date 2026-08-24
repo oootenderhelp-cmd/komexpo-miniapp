@@ -18,6 +18,7 @@ import {
   buildFirstTouchMessage,
   canContact,
   getService,
+  getSlaState,
   scoreUrgency,
   type UrgencyTier,
 } from "@shared/dental";
@@ -220,6 +221,29 @@ export const dentalRouter = router({
         });
       }
 
+      // Срочную заявку админ должен увидеть сразу: на критичную обещано
+      // первое касание за 15 минут, а вкладку кабинета никто не обновляет.
+      if (urgency.tier === "critical" || urgency.tier === "high") {
+        try {
+          const staffIds = await db.getStaffUserIds();
+          await db.createNotifications(staffIds, {
+            type: "dental_urgent_lead",
+            title:
+              urgency.tier === "critical"
+                ? `Критичная заявка ${publicId}: связаться за ${URGENCY_SLA_MINUTES.critical} минут`
+                : `Срочная заявка ${publicId}: связаться за час`,
+            message: `${service.name}, ${input.name}, ${phone}. ${urgency.reasons.join(", ")}.`,
+            link: "/dental/leads",
+          });
+        } catch (error) {
+          // Заявка уже сохранена — сбой оповещения не должен её отменять.
+          console.warn(
+            "[Dental] Не удалось оповестить администраторов:",
+            error
+          );
+        }
+      }
+
       return {
         publicId,
         urgency,
@@ -263,6 +287,7 @@ export const dentalRouter = router({
           from: z.date().optional(),
           to: z.date().optional(),
           search: z.string().trim().max(255).optional(),
+          overdueOnly: z.boolean().optional(),
           limit: z.number().int().min(1).max(200).default(50),
           offset: z.number().int().min(0).default(0),
         })
@@ -270,13 +295,20 @@ export const dentalRouter = router({
     )
     .query(async ({ input }) => {
       const { items, total } = await db.getDentalLeads(input);
+      const now = new Date();
       return {
         total,
-        items: items.map(lead => ({
-          ...lead,
-          slaMinutes: URGENCY_SLA_MINUTES[lead.urgencyTier as UrgencyTier],
-          contactable: canContact(lead),
-        })),
+        items: items.map(lead => {
+          const sla = getSlaState(lead, now);
+          return {
+            ...lead,
+            slaMinutes: URGENCY_SLA_MINUTES[lead.urgencyTier as UrgencyTier],
+            slaMinutesLeft: sla.minutesLeft,
+            slaBreached: sla.breached,
+            slaRunning: sla.running,
+            contactable: canContact(lead),
+          };
+        }),
       };
     }),
 
@@ -300,6 +332,24 @@ export const dentalRouter = router({
         .default({ days: 30 })
     )
     .query(async ({ input }) => db.getDentalDailyStats(input.days)),
+
+  campaignStats: staffProcedure
+    .input(
+      z
+        .object({ days: z.number().int().min(1).max(365).default(30) })
+        .default({ days: 30 })
+    )
+    .query(async ({ input }) => db.getDentalCampaignStats(input.days)),
+
+  /** Сколько заявок уже просрочено по SLA — счётчик для шапки кабинета. */
+  overdueCount: staffProcedure.query(async () => {
+    const { total } = await db.getDentalLeads({
+      overdueOnly: true,
+      limit: 1,
+      offset: 0,
+    });
+    return { total };
+  }),
 
   setStatus: staffProcedure
     .input(

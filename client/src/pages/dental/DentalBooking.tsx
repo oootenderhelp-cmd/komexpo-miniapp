@@ -20,6 +20,9 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import { trpc } from "@/lib/trpc";
+import DentalAnalytics, {
+  trackLeadSubmitted,
+} from "@/components/dental/DentalAnalytics";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -125,6 +128,7 @@ export default function DentalBooking() {
 
   const submit = trpc.dental.submitLead.useMutation({
     onSuccess: result => {
+      trackLeadSubmitted(serviceSlug);
       setSubmitted({
         publicId: result.publicId,
         tier: result.urgency.tier,
@@ -184,6 +188,7 @@ export default function DentalBooking() {
   if (submitted) {
     return (
       <div className="min-h-screen bg-gradient-to-b from-sky-50 to-white px-4 py-16">
+        <DentalAnalytics />
         <Card className="mx-auto max-w-xl">
           <CardHeader className="text-center">
             <CheckCircle2 className="mx-auto h-14 w-14 text-emerald-500" />
@@ -207,8 +212,15 @@ export default function DentalBooking() {
               <span>По заявке действует: {submitted.leadMagnet}</span>
             </div>
             <div className="rounded-lg bg-slate-50 p-4 text-slate-600">
-              Если передумаете — сообщите номер заявки {submitted.publicId}{" "}
-              администратору, и мы снимем её с работы и больше не будем писать.
+              Если передумаете — откройте{" "}
+              <a
+                className="font-medium text-sky-700 underline"
+                href={`/dental/opt-out?id=${submitted.publicId}`}
+              >
+                страницу отзыва согласия
+              </a>{" "}
+              и укажите номер заявки {submitted.publicId}. Мы снимем её с работы
+              и больше не будем писать.
             </div>
             <Button className="w-full" onClick={() => setSubmitted(null)}>
               Оставить ещё одну заявку
@@ -221,6 +233,7 @@ export default function DentalBooking() {
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-sky-50 to-white">
+      <DentalAnalytics />
       <header className="mx-auto max-w-5xl px-4 pt-14 pb-8 text-center">
         <Badge className="mb-4 bg-sky-100 text-sky-800 hover:bg-sky-100">
           <MapPin className="mr-1 h-3 w-3" /> Сеть клиник DAREMA ·

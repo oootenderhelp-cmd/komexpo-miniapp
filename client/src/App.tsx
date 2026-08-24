@@ -21,6 +21,7 @@ import PaymentPage from "./pages/PaymentPage";
 import AuthPage from "./pages/AuthPage";
 import DentalBooking from "./pages/dental/DentalBooking";
 import DentalLeads from "./pages/dental/DentalLeads";
+import DentalOptOut from "./pages/dental/DentalOptOut";
 
 function Router() {
   return (
@@ -45,6 +46,7 @@ function Router() {
       <Route path="/payments" component={PaymentPage} />
       <Route path="/dental" component={DentalBooking} />
       <Route path="/dental/leads" component={DentalLeads} />
+      <Route path="/dental/opt-out" component={DentalOptOut} />
       <Route path="/404" component={NotFound} />
       <Route component={NotFound} />
     </Switch>
@@ -65,4 +67,3 @@ function App() {
 }
 
 export default App;
-

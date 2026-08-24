@@ -9,7 +9,9 @@ import {
   LEAD_STATUS_LABELS,
   MESSENGER_LABELS,
   URGENCY_SHORT,
+  formatSlaLabel,
   getService,
+  getSlaState,
   readinessLabel,
   symptomLabel,
   type LeadStatus,
@@ -188,6 +190,11 @@ const COLUMNS: {
     header: "Первое касание",
     width: 18,
     value: l => formatDateTime(l.firstTouchAt),
+  },
+  {
+    header: "SLA первого касания",
+    width: 22,
+    value: l => formatSlaLabel(getSlaState(l)),
   },
   { header: "Дата приёма", width: 18, value: l => formatDateTime(l.visitAt) },
 ];

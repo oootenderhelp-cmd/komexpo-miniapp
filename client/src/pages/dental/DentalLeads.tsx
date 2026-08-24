@@ -14,7 +14,9 @@ import {
   Copy,
   Download,
   MessageSquare,
+  Megaphone,
   Search,
+  TimerOff,
   Users,
 } from "lucide-react";
 import { trpc } from "@/lib/trpc";
@@ -63,6 +65,7 @@ import {
   type MessengerType,
   type UrgencyTier,
 } from "@shared/dental";
+import { Switch } from "@/components/ui/switch";
 
 const TIER_STYLES: Record<UrgencyTier, string> = {
   critical: "bg-red-100 text-red-800 border-red-200",
@@ -87,6 +90,20 @@ const formatDateTime = (value: Date | string | null | undefined) => {
   });
 };
 
+/** Подпись срока в очереди: сколько осталось или насколько просрочено. */
+const slaLabel = (lead: {
+  slaBreached: boolean;
+  slaRunning: boolean;
+  slaMinutesLeft: number;
+  slaMinutes: number;
+}) => {
+  const abs = Math.abs(lead.slaMinutesLeft);
+  const human = abs < 60 ? `${abs} мин` : `${Math.round(abs / 60)} ч`;
+  if (lead.slaBreached) return `просрочено на ${human}`;
+  if (!lead.slaRunning) return `связались в срок`;
+  return `осталось ${human}`;
+};
+
 export default function DentalLeads() {
   const utils = trpc.useUtils();
   const [status, setStatus] = useState<string>("all");
@@ -99,6 +116,7 @@ export default function DentalLeads() {
   } | null>(null);
   const [messageText, setMessageText] = useState("");
   const [messageChannel, setMessageChannel] = useState("");
+  const [overdueOnly, setOverdueOnly] = useState(false);
   const [exporting, setExporting] = useState(false);
 
   const filters = useMemo(
@@ -107,20 +125,29 @@ export default function DentalLeads() {
       urgencyTier: tier === "all" ? undefined : (tier as UrgencyTier),
       serviceSlug: serviceSlug === "all" ? undefined : serviceSlug,
       search: search.trim() || undefined,
+      overdueOnly: overdueOnly || undefined,
       limit: 100,
       offset: 0,
     }),
-    [status, tier, serviceSlug, search]
+    [status, tier, serviceSlug, search, overdueOnly]
   );
 
   const { data, isLoading } = trpc.dental.list.useQuery(filters);
   const { data: dailyStats } = trpc.dental.dailyStats.useQuery({ days: 30 });
+  const { data: campaignStats } = trpc.dental.campaignStats.useQuery({
+    days: 30,
+  });
+  const { data: overdue } = trpc.dental.overdueCount.useQuery(undefined, {
+    // Просрочка считается от текущего времени, поэтому счётчик надо освежать.
+    refetchInterval: 60_000,
+  });
 
   const setStatusMutation = trpc.dental.setStatus.useMutation({
     onSuccess: () => {
       toast.success("Статус обновлён");
       utils.dental.list.invalidate();
       utils.dental.dailyStats.invalidate();
+      utils.dental.overdueCount.invalidate();
     },
     onError: (e: any) => toast.error(e.message),
   });
@@ -129,6 +156,7 @@ export default function DentalLeads() {
     onSuccess: () => {
       toast.success("Касание зафиксировано");
       utils.dental.list.invalidate();
+      utils.dental.overdueCount.invalidate();
     },
     onError: (e: any) => toast.error(e.message),
   });
@@ -212,9 +240,9 @@ export default function DentalLeads() {
             value={criticalCount}
           />
           <StatCard
-            icon={<CalendarDays className="h-4 w-4 text-sky-600" />}
-            label="За последний день"
-            value={todayStats?.total ?? 0}
+            icon={<TimerOff className="h-4 w-4 text-red-600" />}
+            label="Просрочено по SLA"
+            value={overdue?.total ?? 0}
           />
           <StatCard
             icon={<CalendarDays className="h-4 w-4 text-emerald-600" />}
@@ -227,6 +255,7 @@ export default function DentalLeads() {
           <TabsList>
             <TabsTrigger value="queue">Очередь</TabsTrigger>
             <TabsTrigger value="report">Отчёт по дням</TabsTrigger>
+            <TabsTrigger value="campaigns">Кампании</TabsTrigger>
           </TabsList>
 
           <TabsContent value="queue" className="space-y-4">
@@ -280,6 +309,21 @@ export default function DentalLeads() {
                     ))}
                   </SelectContent>
                 </Select>
+                <label className="flex cursor-pointer items-center gap-3 rounded-md border px-3 py-2 text-sm sm:col-span-2 lg:col-span-4">
+                  <Switch
+                    checked={overdueOnly}
+                    onCheckedChange={setOverdueOnly}
+                  />
+                  Только просроченные по SLA
+                  {(overdue?.total ?? 0) > 0 && (
+                    <Badge
+                      variant="outline"
+                      className="border-red-200 bg-red-100 text-red-800"
+                    >
+                      {overdue?.total}
+                    </Badge>
+                  )}
+                </label>
               </CardContent>
             </Card>
 
@@ -332,8 +376,14 @@ export default function DentalLeads() {
                             {URGENCY_SHORT[lead.urgencyTier as UrgencyTier]} ·{" "}
                             {lead.urgencyScore}
                           </Badge>
-                          <div className="mt-1 text-xs text-slate-400">
-                            связаться за {lead.slaMinutes} мин
+                          <div
+                            className={
+                              lead.slaBreached
+                                ? "mt-1 text-xs font-medium text-red-600"
+                                : "mt-1 text-xs text-slate-400"
+                            }
+                          >
+                            {slaLabel(lead)}
                           </div>
                         </TableCell>
                         <TableCell>
@@ -466,6 +516,66 @@ export default function DentalLeads() {
                             : 0}
                           %
                         </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="campaigns">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-lg">
+                  <Megaphone className="h-4 w-4 text-sky-600" />
+                  Кампании за 30 дней
+                </CardTitle>
+                <CardDescription>
+                  Клиника платит за приход, поэтому кампании сравниваются по
+                  доле дошедших до приёма, а не по числу заявок
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Источник</TableHead>
+                      <TableHead>Кампания</TableHead>
+                      <TableHead>Заявок</TableHead>
+                      <TableHead>Записаны</TableHead>
+                      <TableHead>Дошли</TableHead>
+                      <TableHead>Доля приходов</TableHead>
+                      <TableHead>Доля критичных</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {(campaignStats ?? []).length === 0 && (
+                      <TableRow>
+                        <TableCell
+                          colSpan={7}
+                          className="py-10 text-center text-slate-500"
+                        >
+                          Пока нет заявок с метками кампаний
+                        </TableCell>
+                      </TableRow>
+                    )}
+                    {(campaignStats ?? []).map(row => (
+                      <TableRow key={`${row.channel}:${row.campaign}`}>
+                        <TableCell>{row.channel}</TableCell>
+                        <TableCell className="font-medium">
+                          {row.campaign}
+                        </TableCell>
+                        <TableCell>{row.leads}</TableCell>
+                        <TableCell>{row.scheduled}</TableCell>
+                        <TableCell>{row.visited}</TableCell>
+                        <TableCell>
+                          {row.leads > 0
+                            ? Math.round((row.visited / row.leads) * 100)
+                            : 0}
+                          %
+                        </TableCell>
+                        <TableCell>{row.criticalShare}%</TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
