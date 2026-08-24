@@ -330,6 +330,11 @@ export const dentalLeads = mysqlTable("dental_leads", {
   // Воронка
   status: mysqlEnum("status", ["new", "contacted", "scheduled", "visited", "no_answer", "rejected", "spam"]).default("new").notNull(),
   assignedToUserId: int("assignedToUserId"),
+
+  // Кому из партнёров ушла заявка
+  partnerId: int("partnerId"),
+  routedAt: timestamp("routedAt"),
+  region: varchar("region", { length: 128 }),
   firstTouchAt: timestamp("firstTouchAt"),
   visitAt: timestamp("visitAt"),
 
@@ -343,6 +348,8 @@ export const dentalLeads = mysqlTable("dental_leads", {
   index("dental_leads_created_idx").on(table.createdAt),
   index("dental_leads_service_idx").on(table.serviceSlug),
   index("dental_leads_phone_idx").on(table.phone),
+  index("dental_leads_partner_idx").on(table.partnerId, table.createdAt),
+  index("dental_leads_city_idx").on(table.city),
 ]);
 
 export const dentalLeadEvents = mysqlTable("dental_lead_events", {
@@ -357,4 +364,37 @@ export const dentalLeadEvents = mysqlTable("dental_lead_events", {
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 }, table => [
   index("dental_lead_events_lead_idx").on(table.leadId, table.createdAt),
+]);
+
+// ============ ПАРТНЁРСКИЕ КЛИНИКИ (модель агрегатора) ============
+// Заявку оставляет пациент, покупает её клиника-партнёр. Партнёр — это
+// организация, её контакты не персональные данные пациента.
+
+export const dentalPartners = mysqlTable("dental_partners", {
+  id: int("id").autoincrement().primaryKey(),
+  name: varchar("name", { length: 255 }).notNull(),
+  slug: varchar("slug", { length: 255 }).notNull().unique(),
+  city: varchar("city", { length: 128 }).notNull(),
+  region: varchar("region", { length: 128 }),
+  address: varchar("address", { length: 512 }),
+  site: varchar("site", { length: 512 }),
+
+  // Контакт ответственного в клинике — рабочие данные по договору
+  contactName: varchar("contactName", { length: 255 }),
+  contactPhone: varchar("contactPhone", { length: 32 }),
+  contactEmail: varchar("contactEmail", { length: 320 }),
+
+  // Какие направления берёт; пустой список — любые
+  services: json("services"),
+
+  // Коммерция по договору
+  pricePerLead: decimal("pricePerLead", { precision: 10, scale: 2 }).default("0.00"),
+  pricePerVisit: decimal("pricePerVisit", { precision: 10, scale: 2 }).default("0.00"),
+  dailyCap: int("dailyCap").default(0).notNull(),
+
+  status: mysqlEnum("status", ["active", "paused", "archived"]).default("active").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, table => [
+  index("dental_partners_city_idx").on(table.city, table.status),
 ]);

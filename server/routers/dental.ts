@@ -19,6 +19,7 @@ import {
   canContact,
   getService,
   getSlaState,
+  pickPartner,
   scoreUrgency,
   type UrgencyTier,
 } from "@shared/dental";
@@ -103,12 +104,62 @@ function isDuplicate(key: string, now: number): boolean {
   return seen !== undefined && now - seen < DEDUPE_WINDOW_MS;
 }
 
+/** Латинский slug для адреса партнёра: кириллица транслитерируется. */
+const TRANSLIT: Record<string, string> = {
+  а: "a",
+  б: "b",
+  в: "v",
+  г: "g",
+  д: "d",
+  е: "e",
+  ё: "e",
+  ж: "zh",
+  з: "z",
+  и: "i",
+  й: "y",
+  к: "k",
+  л: "l",
+  м: "m",
+  н: "n",
+  о: "o",
+  п: "p",
+  р: "r",
+  с: "s",
+  т: "t",
+  у: "u",
+  ф: "f",
+  х: "h",
+  ц: "c",
+  ч: "ch",
+  ш: "sh",
+  щ: "sch",
+  ъ: "",
+  ы: "y",
+  ь: "",
+  э: "e",
+  ю: "yu",
+  я: "ya",
+};
+
+const slugify = (value: string): string =>
+  value
+    .toLowerCase()
+    .split("")
+    .map(ch => TRANSLIT[ch] ?? ch)
+    .join("")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 60) || "clinic";
+
 const toExportLead = (lead: Record<string, any>): ExportLead =>
   lead as ExportLead;
 
 export const dentalRouter = router({
-  /** Каталог направлений клиники — для формы записи и лендинга. */
+  /** Каталог направлений — для формы записи и лендинга. */
   services: publicProcedure.query(() => DENTAL_SERVICES),
+
+  /** Города, где есть клиника-партнёр, принимающая заявки. */
+  cities: publicProcedure.query(async () => db.getDentalCities()),
 
   /** Приём заявки с формы записи. */
   submitLead: publicProcedure
@@ -126,6 +177,7 @@ export const dentalRouter = router({
         messengerType: messengerSchema.default("none"),
         messengerHandle: z.string().trim().max(255).optional(),
         city: z.string().trim().max(128).default("Санкт-Петербург"),
+        region: z.string().trim().max(128).optional(),
         serviceSlug: serviceSlugSchema,
         comment: z.string().trim().max(2000).optional(),
         painLevel: z.number().int().min(0).max(10).default(0),
@@ -178,6 +230,23 @@ export const dentalRouter = router({
         input.consentMarketing && input.messengerType !== "none";
       const publicId = `DL-${nanoid(8).toUpperCase()}`;
 
+      // Модель агрегатора: заявка сразу уходит клинике-партнёру в этом городе.
+      // Если партнёра нет, заявка остаётся нераспределённой — её видно в
+      // кабинете отдельным фильтром, это сигнал, что город пора закрывать.
+      const candidates = await db.getPartnerCandidates(input.city);
+      const partner = pickPartner(
+        candidates.map(c => ({
+          id: c.id,
+          name: c.name,
+          city: c.city,
+          services: Array.isArray(c.services) ? (c.services as string[]) : null,
+          status: c.status,
+          dailyCap: c.dailyCap,
+          todayCount: c.todayCount,
+        })),
+        { city: input.city, serviceSlug: input.serviceSlug }
+      );
+
       const leadId = await db.createDentalLead({
         publicId,
         name: input.name,
@@ -208,6 +277,9 @@ export const dentalRouter = router({
         consentAt: new Date(),
         consentText: "dental-v1",
         status: "new",
+        partnerId: partner?.id ?? null,
+        routedAt: partner ? new Date() : null,
+        region: input.region ?? null,
       });
 
       // Заявка не записалась (нет БД, отказ вставки) — нельзя отвечать «принято»:
@@ -249,6 +321,7 @@ export const dentalRouter = router({
         urgency,
         slaMinutes: URGENCY_SLA_MINUTES[urgency.tier],
         leadMagnet: service.leadMagnet,
+        clinic: partner ? { name: partner.name, city: partner.city } : null,
       };
     }),
 
@@ -288,6 +361,9 @@ export const dentalRouter = router({
           to: z.date().optional(),
           search: z.string().trim().max(255).optional(),
           overdueOnly: z.boolean().optional(),
+          partnerId: z.number().int().optional(),
+          unrouted: z.boolean().optional(),
+          city: z.string().trim().max(128).optional(),
           limit: z.number().int().min(1).max(200).default(50),
           offset: z.number().int().min(0).default(0),
         })
@@ -451,6 +527,161 @@ export const dentalRouter = router({
       return { success: true };
     }),
 
+  // ============ ПАРТНЁРСКИЕ КЛИНИКИ ============
+
+  partners: staffProcedure
+    .input(
+      z
+        .object({
+          city: z.string().trim().max(128).optional(),
+          status: z.enum(["active", "paused", "archived"]).optional(),
+        })
+        .default({})
+    )
+    .query(async ({ input }) => db.getDentalPartners(input)),
+
+  partnerStats: staffProcedure
+    .input(
+      z
+        .object({ days: z.number().int().min(1).max(365).default(30) })
+        .default({ days: 30 })
+    )
+    .query(async ({ input }) => db.getDentalPartnerStats(input.days)),
+
+  createPartner: staffProcedure
+    .input(
+      z.object({
+        name: z.string().trim().min(2).max(255),
+        city: z.string().trim().min(2).max(128),
+        region: z.string().trim().max(128).optional(),
+        address: z.string().trim().max(512).optional(),
+        site: z.string().trim().max(512).optional(),
+        contactName: z.string().trim().max(255).optional(),
+        contactPhone: z.string().trim().max(32).optional(),
+        contactEmail: z
+          .string()
+          .trim()
+          .email()
+          .max(320)
+          .optional()
+          .or(z.literal("")),
+        services: z.array(serviceSlugSchema).optional(),
+        pricePerLead: z.number().min(0).max(1000000).optional(),
+        pricePerVisit: z.number().min(0).max(1000000).optional(),
+        dailyCap: z.number().int().min(0).max(1000).default(0),
+      })
+    )
+    .mutation(async ({ input }) => {
+      const slug = `${slugify(input.name)}-${slugify(input.city)}-${nanoid(4).toLowerCase()}`;
+      const partnerId = await db.createDentalPartner({
+        name: input.name,
+        slug,
+        city: input.city,
+        region: input.region ?? null,
+        address: input.address ?? null,
+        site: input.site ?? null,
+        contactName: input.contactName ?? null,
+        contactPhone: input.contactPhone ?? null,
+        contactEmail: input.contactEmail ? input.contactEmail : null,
+        services: input.services ?? [],
+        pricePerLead: input.pricePerLead?.toFixed(2) ?? "0.00",
+        pricePerVisit: input.pricePerVisit?.toFixed(2) ?? "0.00",
+        dailyCap: input.dailyCap,
+        status: "active",
+      });
+      if (!partnerId) {
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: "Не удалось сохранить клинику",
+        });
+      }
+      return { id: Number(partnerId), slug };
+    }),
+
+  updatePartner: staffProcedure
+    .input(
+      z.object({
+        id: z.number().int(),
+        status: z.enum(["active", "paused", "archived"]).optional(),
+        dailyCap: z.number().int().min(0).max(1000).optional(),
+        pricePerLead: z.number().min(0).max(1000000).optional(),
+        pricePerVisit: z.number().min(0).max(1000000).optional(),
+        contactName: z.string().trim().max(255).optional(),
+        contactPhone: z.string().trim().max(32).optional(),
+        contactEmail: z
+          .string()
+          .trim()
+          .email()
+          .max(320)
+          .optional()
+          .or(z.literal("")),
+        services: z.array(serviceSlugSchema).optional(),
+      })
+    )
+    .mutation(async ({ input }) => {
+      const partner = await db.getDentalPartnerById(input.id);
+      if (!partner) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Клиника не найдена",
+        });
+      }
+      const patch: Record<string, unknown> = {};
+      if (input.status !== undefined) patch.status = input.status;
+      if (input.dailyCap !== undefined) patch.dailyCap = input.dailyCap;
+      if (input.pricePerLead !== undefined)
+        patch.pricePerLead = input.pricePerLead.toFixed(2);
+      if (input.pricePerVisit !== undefined)
+        patch.pricePerVisit = input.pricePerVisit.toFixed(2);
+      if (input.contactName !== undefined)
+        patch.contactName = input.contactName;
+      if (input.contactPhone !== undefined)
+        patch.contactPhone = input.contactPhone;
+      if (input.contactEmail !== undefined)
+        patch.contactEmail = input.contactEmail || null;
+      if (input.services !== undefined) patch.services = input.services;
+      await db.updateDentalPartner(input.id, patch);
+      return { success: true };
+    }),
+
+  /** Ручная передача заявки другой клинике — когда партнёр отказался. */
+  routeLead: staffProcedure
+    .input(
+      z.object({ id: z.number().int(), partnerId: z.number().int().nullable() })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const lead = await db.getDentalLeadById(input.id);
+      if (!lead)
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Заявка не найдена",
+        });
+
+      let partnerName = "не распределена";
+      if (input.partnerId !== null) {
+        const partner = await db.getDentalPartnerById(input.partnerId);
+        if (!partner) {
+          throw new TRPCError({
+            code: "NOT_FOUND",
+            message: "Клиника не найдена",
+          });
+        }
+        partnerName = partner.name;
+      }
+
+      await db.updateDentalLead(lead.id, {
+        partnerId: input.partnerId,
+        routedAt: input.partnerId === null ? null : new Date(),
+      });
+      await db.addDentalLeadEvent({
+        leadId: lead.id,
+        type: "note",
+        body: `Заявка передана: ${partnerName}`,
+        actorUserId: ctx.user.id,
+      });
+      return { success: true };
+    }),
+
   /** Выгрузка в .xlsx: сводка по дням, общий лист и вкладка на каждый день. */
   exportXlsx: staffProcedure
     .input(
@@ -459,6 +690,8 @@ export const dentalRouter = router({
           status: statusSchema.optional(),
           urgencyTier: tierSchema.optional(),
           serviceSlug: serviceSlugSchema.optional(),
+          partnerId: z.number().int().optional(),
+          city: z.string().trim().max(128).optional(),
           from: z.date().optional(),
           to: z.date().optional(),
         })
@@ -466,8 +699,16 @@ export const dentalRouter = router({
     )
     .query(async ({ input }) => {
       const leads = await db.getDentalLeadsForExport(input);
+      // Подставляем названия клиник: в строке лида лежит только их id.
+      const partners = await db.getDentalPartners();
+      const partnerNames = new Map(partners.map(p => [p.id, p.name]));
       const { buffer, omittedDays, totalLeads } = buildLeadWorkbook(
-        leads.map(toExportLead)
+        leads.map(lead => ({
+          ...toExportLead(lead),
+          partnerName: lead.partnerId
+            ? (partnerNames.get(lead.partnerId) ?? null)
+            : null,
+        }))
       );
       return {
         filename: `darema-leads-${new Date().toISOString().slice(0, 10)}.xlsx`,

@@ -279,6 +279,76 @@ export const URGENCY_SLA_MINUTES: Record<UrgencyTier, number> = {
   low: 1440,
 };
 
+// ============ ПАРТНЁРСКИЕ КЛИНИКИ ============
+
+/**
+ * Модель агрегатора: заявку оставляет пациент, а покупает её клиника-партнёр.
+ * Маршрутизация решает, какому партнёру уходит конкретная заявка.
+ */
+export type PartnerLike = {
+  id: number;
+  name: string;
+  city: string;
+  /** Направления, которые партнёр готов принимать; пустой список — все. */
+  services?: string[] | null;
+  status: string;
+  /** Сколько заявок партнёр готов принять в сутки; 0 — без ограничения. */
+  dailyCap?: number | null;
+  /** Сколько заявок уже ушло ему сегодня. */
+  todayCount?: number;
+};
+
+export const normalizeCity = (city: string): string =>
+  city.trim().toLowerCase().replace(/ё/g, "е").replace(/\s+/g, " ");
+
+/** Партнёр подходит заявке: активен, тот же город, берёт это направление. */
+export function partnerFits(
+  partner: PartnerLike,
+  lead: { city: string; serviceSlug: string }
+): boolean {
+  if (partner.status !== "active") return false;
+  if (normalizeCity(partner.city) !== normalizeCity(lead.city)) return false;
+  const services = partner.services;
+  if (
+    services &&
+    services.length > 0 &&
+    services.indexOf(lead.serviceSlug) === -1
+  ) {
+    return false;
+  }
+  const cap = partner.dailyCap ?? 0;
+  if (cap > 0 && (partner.todayCount ?? 0) >= cap) return false;
+  return true;
+}
+
+/**
+ * Выбирает партнёра под заявку.
+ *
+ * Между подходящими распределяем по наименьшей сегодняшней загрузке: если
+ * отдавать всё первому в списке, он упрётся в свой лимит к обеду, а остальные
+ * партнёры останутся без заявок и уйдут. При равенстве берём меньший id, чтобы
+ * распределение было воспроизводимым и его можно было объяснить партнёру.
+ */
+export function pickPartner(
+  partners: PartnerLike[],
+  lead: { city: string; serviceSlug: string }
+): PartnerLike | null {
+  const fitting = partners.filter(p => partnerFits(p, lead));
+  if (fitting.length === 0) return null;
+  return fitting.reduce((best, candidate) => {
+    const bestLoad = best.todayCount ?? 0;
+    const load = candidate.todayCount ?? 0;
+    if (load !== bestLoad) return load < bestLoad ? candidate : best;
+    return candidate.id < best.id ? candidate : best;
+  });
+}
+
+export const PARTNER_STATUS_LABELS: Record<string, string> = {
+  active: "Принимает заявки",
+  paused: "На паузе",
+  archived: "В архиве",
+};
+
 // ============ КОНТРОЛЬ SLA ============
 
 /** Статусы, при которых часы SLA уже остановлены — с человеком связались. */

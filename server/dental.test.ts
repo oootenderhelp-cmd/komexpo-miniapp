@@ -7,7 +7,10 @@ import {
   formatSlaLabel,
   getService,
   getSlaState,
+  partnerFits,
+  pickPartner,
   scoreUrgency,
+  normalizeCity,
 } from "@shared/dental";
 import { buildXlsx, columnLetter, safeSheetName } from "./lib/xlsx";
 import {
@@ -185,6 +188,80 @@ describe("право на переписку", () => {
       canContact({ ...base, messengerType: "none", messengerHandle: null })
     ).toBe(false);
     expect(canContact({ ...base, messengerHandle: "   " })).toBe(false);
+  });
+});
+
+describe("маршрутизация заявок партнёрам", () => {
+  const base = {
+    id: 1,
+    name: "Клиника А",
+    city: "Казань",
+    services: null,
+    status: "active",
+    dailyCap: 0,
+    todayCount: 0,
+  };
+  const lead = { city: "Казань", serviceSlug: "implantaciya" };
+
+  it("город сравнивается без учёта регистра и буквы ё", () => {
+    expect(normalizeCity("Орёл")).toBe(normalizeCity("орел"));
+    expect(partnerFits({ ...base, city: "казань" }, lead)).toBe(true);
+  });
+
+  it("не отдаёт заявку клинике из другого города", () => {
+    expect(partnerFits({ ...base, city: "Уфа" }, lead)).toBe(false);
+  });
+
+  it("не отдаёт заявку клинике на паузе", () => {
+    expect(partnerFits({ ...base, status: "paused" }, lead)).toBe(false);
+  });
+
+  it("уважает список направлений партнёра", () => {
+    expect(partnerFits({ ...base, services: ["gigiena"] }, lead)).toBe(false);
+    expect(partnerFits({ ...base, services: ["implantaciya"] }, lead)).toBe(
+      true
+    );
+    // Пустой список означает «беру всё», а не «не беру ничего».
+    expect(partnerFits({ ...base, services: [] }, lead)).toBe(true);
+  });
+
+  it("не отдаёт заявку сверх суточного лимита", () => {
+    expect(partnerFits({ ...base, dailyCap: 5, todayCount: 5 }, lead)).toBe(
+      false
+    );
+    expect(partnerFits({ ...base, dailyCap: 5, todayCount: 4 }, lead)).toBe(
+      true
+    );
+    // Ноль — это «без лимита», а не «ноль заявок».
+    expect(partnerFits({ ...base, dailyCap: 0, todayCount: 99 }, lead)).toBe(
+      true
+    );
+  });
+
+  it("отдаёт заявку наименее загруженной клинике", () => {
+    const chosen = pickPartner(
+      [
+        { ...base, id: 1, todayCount: 7 },
+        { ...base, id: 2, todayCount: 2 },
+        { ...base, id: 3, todayCount: 5 },
+      ],
+      lead
+    );
+    expect(chosen?.id).toBe(2);
+  });
+
+  it("при равной загрузке выбор воспроизводим", () => {
+    const partners = [
+      { ...base, id: 9, todayCount: 3 },
+      { ...base, id: 4, todayCount: 3 },
+    ];
+    expect(pickPartner(partners, lead)?.id).toBe(4);
+    expect(pickPartner([...partners].reverse(), lead)?.id).toBe(4);
+  });
+
+  it("возвращает null, если в городе нет подходящей клиники", () => {
+    expect(pickPartner([{ ...base, city: "Сочи" }], lead)).toBeNull();
+    expect(pickPartner([], lead)).toBeNull();
   });
 });
 
@@ -418,12 +495,17 @@ describe("выгрузка лидов", () => {
       makeLead({ createdAt: new Date("2026-08-20T09:00:00Z") }),
     ]);
     const files = unzip(buffer);
-    expect(files.get("xl/worksheets/sheet2.xml")).toContain(
-      "SLA первого касания"
-    );
+    // Индекс листа зависит от состава книги, поэтому ищем колонку по всем.
+    const allSheets = Array.from(files.entries())
+      .filter(([name]) => name.startsWith("xl/worksheets/"))
+      .map(([, xml]) => xml)
+      .join("");
+    expect(allSheets).toContain("SLA первого касания");
+    expect(allSheets).toContain("Клиника-партнёр");
     const workbook = files.get("xl/workbook.xml")!;
     expect(workbook).toContain("Отчёт по дням");
     expect(workbook).toContain("Все лиды");
+    expect(workbook).toContain("Клиники");
     expect(workbook).toContain("2026-08-21");
     expect(workbook).toContain("2026-08-20");
     expect(totalLeads).toBe(2);
@@ -509,6 +591,33 @@ describe("роутер заявок", () => {
     );
     const result = await caller.dental.list({
       overdueOnly: true,
+      limit: 10,
+      offset: 0,
+    });
+    expect(result).toEqual({ items: [], total: 0 });
+  });
+
+  it("отдаёт список городов всем — форме нужен выбор города", async () => {
+    const caller = appRouter.createCaller(createContext(null));
+    await expect(caller.dental.cities()).resolves.toEqual([]);
+  });
+
+  it("закрывает список клиник от обычного пользователя", async () => {
+    const caller = appRouter.createCaller(createContext({ role: "user" }));
+    await expect(caller.dental.partners({})).rejects.toThrow(/администратор/i);
+  });
+
+  it("не создаёт клинику без города", async () => {
+    const caller = appRouter.createCaller(createContext({ role: "admin" }));
+    await expect(
+      caller.dental.createPartner({ name: "Клиника", city: "", dailyCap: 0 })
+    ).rejects.toThrow();
+  });
+
+  it("принимает фильтр по нераспределённым заявкам", async () => {
+    const caller = appRouter.createCaller(createContext({ role: "admin" }));
+    const result = await caller.dental.list({
+      unrouted: true,
       limit: 10,
       offset: 0,
     });

@@ -66,6 +66,7 @@ import {
   type UrgencyTier,
 } from "@shared/dental";
 import { Switch } from "@/components/ui/switch";
+import PartnersPanel from "@/components/dental/PartnersPanel";
 
 const TIER_STYLES: Record<UrgencyTier, string> = {
   critical: "bg-red-100 text-red-800 border-red-200",
@@ -117,6 +118,7 @@ export default function DentalLeads() {
   const [messageText, setMessageText] = useState("");
   const [messageChannel, setMessageChannel] = useState("");
   const [overdueOnly, setOverdueOnly] = useState(false);
+  const [partnerFilter, setPartnerFilter] = useState<string>("all");
   const [exporting, setExporting] = useState(false);
 
   const filters = useMemo(
@@ -126,10 +128,15 @@ export default function DentalLeads() {
       serviceSlug: serviceSlug === "all" ? undefined : serviceSlug,
       search: search.trim() || undefined,
       overdueOnly: overdueOnly || undefined,
+      partnerId:
+        partnerFilter === "all" || partnerFilter === "unrouted"
+          ? undefined
+          : Number(partnerFilter),
+      unrouted: partnerFilter === "unrouted" || undefined,
       limit: 100,
       offset: 0,
     }),
-    [status, tier, serviceSlug, search, overdueOnly]
+    [status, tier, serviceSlug, search, overdueOnly, partnerFilter]
   );
 
   const { data, isLoading } = trpc.dental.list.useQuery(filters);
@@ -137,6 +144,7 @@ export default function DentalLeads() {
   const { data: campaignStats } = trpc.dental.campaignStats.useQuery({
     days: 30,
   });
+  const { data: partners } = trpc.dental.partners.useQuery({});
   const { data: overdue } = trpc.dental.overdueCount.useQuery(undefined, {
     // Просрочка считается от текущего времени, поэтому счётчик надо освежать.
     refetchInterval: 60_000,
@@ -208,6 +216,7 @@ export default function DentalLeads() {
   };
 
   const leads = data?.items ?? [];
+  const partnerNames = new Map((partners ?? []).map(p => [p.id, p.name]));
   const criticalCount = leads.filter(l => l.urgencyTier === "critical").length;
   const todayStats = dailyStats?.[0];
 
@@ -216,7 +225,7 @@ export default function DentalLeads() {
       <div className="mx-auto max-w-7xl space-y-6">
         <header className="flex flex-wrap items-center justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-bold text-slate-900">Заявки DAREMA</h1>
+            <h1 className="text-2xl font-bold text-slate-900">Заявки</h1>
             <p className="text-sm text-slate-500">
               Очередь на связь: сверху те, кому нужнее всего и кто готов
               приехать раньше
@@ -256,6 +265,7 @@ export default function DentalLeads() {
             <TabsTrigger value="queue">Очередь</TabsTrigger>
             <TabsTrigger value="report">Отчёт по дням</TabsTrigger>
             <TabsTrigger value="campaigns">Кампании</TabsTrigger>
+            <TabsTrigger value="partners">Клиники</TabsTrigger>
           </TabsList>
 
           <TabsContent value="queue" className="space-y-4">
@@ -309,6 +319,20 @@ export default function DentalLeads() {
                     ))}
                   </SelectContent>
                 </Select>
+                <Select value={partnerFilter} onValueChange={setPartnerFilter}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Клиника" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Все клиники</SelectItem>
+                    <SelectItem value="unrouted">Нераспределённые</SelectItem>
+                    {(partners ?? []).map(p => (
+                      <SelectItem key={p.id} value={String(p.id)}>
+                        {p.name} — {p.city}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
                 <label className="flex cursor-pointer items-center gap-3 rounded-md border px-3 py-2 text-sm sm:col-span-2 lg:col-span-4">
                   <Switch
                     checked={overdueOnly}
@@ -336,6 +360,7 @@ export default function DentalLeads() {
                       <TableHead>Пациент</TableHead>
                       <TableHead>Услуга</TableHead>
                       <TableHead>Связь</TableHead>
+                      <TableHead>Клиника</TableHead>
                       <TableHead>Источник</TableHead>
                       <TableHead>Создана</TableHead>
                       <TableHead>Статус</TableHead>
@@ -346,7 +371,7 @@ export default function DentalLeads() {
                     {isLoading && (
                       <TableRow>
                         <TableCell
-                          colSpan={8}
+                          colSpan={9}
                           className="py-10 text-center text-slate-500"
                         >
                           Загружаем заявки…
@@ -356,7 +381,7 @@ export default function DentalLeads() {
                     {!isLoading && leads.length === 0 && (
                       <TableRow>
                         <TableCell
-                          colSpan={8}
+                          colSpan={9}
                           className="py-10 text-center text-slate-500"
                         >
                           Заявок пока нет. Как только пойдёт трафик на форму
@@ -415,6 +440,14 @@ export default function DentalLeads() {
                               переписка не разрешена
                             </div>
                           )}
+                        </TableCell>
+                        <TableCell className="text-xs">
+                          {partnerNames.get(lead.partnerId ?? -1) ?? (
+                            <span className="text-amber-700">
+                              не распределена
+                            </span>
+                          )}
+                          <div className="text-slate-400">{lead.city}</div>
                         </TableCell>
                         <TableCell className="text-xs text-slate-500">
                           {[lead.sourceChannel, lead.utmCampaign]
@@ -582,6 +615,10 @@ export default function DentalLeads() {
                 </Table>
               </CardContent>
             </Card>
+          </TabsContent>
+
+          <TabsContent value="partners">
+            <PartnersPanel />
           </TabsContent>
         </Tabs>
       </div>

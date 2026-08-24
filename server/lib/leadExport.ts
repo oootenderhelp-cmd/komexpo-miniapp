@@ -49,6 +49,11 @@ export type ExportLead = {
   consentMarketing: boolean;
   optedOut: boolean;
   status: string;
+  partnerId?: number | null;
+  /** Название клиники-партнёра — подставляется при выгрузке. */
+  partnerName?: string | null;
+  region?: string | null;
+  routedAt?: Date | string | null;
   firstTouchAt?: Date | string | null;
   visitAt?: Date | string | null;
   createdAt: Date | string;
@@ -134,6 +139,12 @@ const COLUMNS: {
   },
   { header: "Ник / контакт", width: 22, value: l => l.messengerHandle ?? "" },
   { header: "Город", width: 18, value: l => l.city },
+  { header: "Регион", width: 20, value: l => l.region ?? "" },
+  {
+    header: "Клиника-партнёр",
+    width: 28,
+    value: l => l.partnerName ?? "не распределена",
+  },
   {
     header: "Услуга",
     width: 24,
@@ -255,6 +266,43 @@ export function buildDailyStats(leads: ExportLead[]): DailyStatRow[] {
   });
 }
 
+export type PartnerStatRow = {
+  partner: string;
+  city: string;
+  leads: number;
+  scheduled: number;
+  visited: number;
+  conversion: number;
+};
+
+/** Разрез по клиникам-партнёрам: кому отдали заявки и как они их отработали. */
+export function buildPartnerStats(leads: ExportLead[]): PartnerStatRow[] {
+  const map = new Map<string, ExportLead[]>();
+  for (const lead of leads) {
+    const key = `${lead.partnerName ?? "не распределена"}|${lead.city}`;
+    const bucket = map.get(key);
+    if (bucket) bucket.push(lead);
+    else map.set(key, [lead]);
+  }
+  return Array.from(map.entries())
+    .map(([key, group]) => {
+      const [partner, city] = key.split("|");
+      const visited = group.filter(l => l.status === "visited").length;
+      return {
+        partner,
+        city,
+        leads: group.length,
+        scheduled: group.filter(
+          l => l.status === "scheduled" || l.status === "visited"
+        ).length,
+        visited,
+        conversion:
+          group.length > 0 ? Math.round((visited / group.length) * 100) : 0,
+      };
+    })
+    .sort((a, b) => b.leads - a.leads);
+}
+
 /** Сколько вкладок-дней класть в книгу: дальше Excel становится неудобным. */
 const MAX_DAY_SHEETS = 60;
 
@@ -307,6 +355,26 @@ export function buildLeadWorkbook(leads: ExportLead[]): WorkbookResult {
     rows: sorted.map(leadRow),
   };
 
+  const partnerSheet: Sheet = {
+    name: "Клиники",
+    columns: [
+      { header: "Клиника", width: 30 },
+      { header: "Город", width: 20 },
+      { header: "Лидов", width: 12 },
+      { header: "Записаны", width: 12 },
+      { header: "Дошли", width: 12 },
+      { header: "Конверсия в приход, %", width: 22 },
+    ],
+    rows: buildPartnerStats(sorted).map(p => [
+      p.partner,
+      p.city,
+      p.leads,
+      p.scheduled,
+      p.visited,
+      p.conversion,
+    ]),
+  };
+
   const days = groupByDay(sorted);
   const shown = days.slice(0, MAX_DAY_SHEETS);
   const omittedDays = days.slice(MAX_DAY_SHEETS).map(d => d.day);
@@ -318,7 +386,7 @@ export function buildLeadWorkbook(leads: ExportLead[]): WorkbookResult {
   }));
 
   return {
-    buffer: buildXlsx([reportSheet, allSheet, ...daySheets]),
+    buffer: buildXlsx([reportSheet, partnerSheet, allSheet, ...daySheets]),
     omittedDays,
     totalLeads: sorted.length,
   };

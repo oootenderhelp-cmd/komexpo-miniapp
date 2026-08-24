@@ -1,5 +1,5 @@
 /**
- * Публичная страница записи в клиники DAREMA (Санкт-Петербург).
+ * Публичная страница записи к стоматологу.
  *
  * Заявку заполняет сам пациент. Метки кампании подхватываются из адреса
  * страницы — так видно, из какой рекламы пришёл человек, при этом никаких
@@ -84,13 +84,16 @@ type Submitted = {
   tier: UrgencyTier;
   slaMinutes: number;
   leadMagnet: string;
+  clinic: { name: string; city: string } | null;
 };
 
 export default function DentalBooking() {
   const search = useSearch();
   const { data: services } = trpc.dental.services.useQuery();
+  const { data: cities } = trpc.dental.cities.useQuery();
 
   const [serviceSlug, setServiceSlug] = useState("");
+  const [city, setCity] = useState("");
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
@@ -120,11 +123,19 @@ export default function DentalBooking() {
     };
   }, [search]);
 
-  // Ссылка из объявления может сразу вести на нужное направление.
+  // Ссылка из объявления может сразу вести на нужное направление и город.
   useEffect(() => {
-    const preselected = new URLSearchParams(search).get("service");
+    const params = new URLSearchParams(search);
+    const preselected = params.get("service");
     if (preselected) setServiceSlug(preselected);
+    const linkCity = params.get("city");
+    if (linkCity) setCity(linkCity);
   }, [search]);
+
+  // Если партнёр в стране пока один, выбирать город человеку незачем.
+  useEffect(() => {
+    if (!city && cities && cities.length === 1) setCity(cities[0].city);
+  }, [cities, city]);
 
   const submit = trpc.dental.submitLead.useMutation({
     onSuccess: result => {
@@ -134,6 +145,7 @@ export default function DentalBooking() {
         tier: result.urgency.tier,
         slaMinutes: result.slaMinutes,
         leadMagnet: result.leadMagnet,
+        clinic: result.clinic,
       });
       window.scrollTo({ top: 0, behavior: "smooth" });
     },
@@ -156,6 +168,7 @@ export default function DentalBooking() {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!serviceSlug) return toast.error("Выберите направление");
+    if (!city.trim()) return toast.error("Укажите город");
     if (!consentPd)
       return toast.error("Нужно согласие на обработку персональных данных");
     if (
@@ -173,7 +186,7 @@ export default function DentalBooking() {
       email: email || undefined,
       messengerType,
       messengerHandle: messengerHandle || undefined,
-      city: "Санкт-Петербург",
+      city: city.trim(),
       serviceSlug,
       comment: comment || undefined,
       painLevel,
@@ -211,6 +224,14 @@ export default function DentalBooking() {
               <BadgeCheck className="h-4 w-4 text-sky-600" />
               <span>По заявке действует: {submitted.leadMagnet}</span>
             </div>
+            {submitted.clinic && (
+              <div className="flex items-center gap-2">
+                <MapPin className="h-4 w-4 text-sky-600" />
+                <span>
+                  Клиника: {submitted.clinic.name}, {submitted.clinic.city}
+                </span>
+              </div>
+            )}
             <div className="rounded-lg bg-slate-50 p-4 text-slate-600">
               Если передумаете — откройте{" "}
               <a
@@ -236,8 +257,10 @@ export default function DentalBooking() {
       <DentalAnalytics />
       <header className="mx-auto max-w-5xl px-4 pt-14 pb-8 text-center">
         <Badge className="mb-4 bg-sky-100 text-sky-800 hover:bg-sky-100">
-          <MapPin className="mr-1 h-3 w-3" /> Сеть клиник DAREMA ·
-          Санкт-Петербург
+          <MapPin className="mr-1 h-3 w-3" />
+          {cities && cities.length > 0
+            ? `Клиники-партнёры: ${cities.length} ${cities.length === 1 ? "город" : "городов"}`
+            : "Подбор стоматологической клиники"}
         </Badge>
         <h1 className="text-3xl font-bold tracking-tight text-slate-900 sm:text-4xl">
           Запись к стоматологу
@@ -352,6 +375,31 @@ export default function DentalBooking() {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="city">Город</Label>
+                {cities && cities.length > 0 ? (
+                  <Select value={city} onValueChange={setCity}>
+                    <SelectTrigger id="city">
+                      <SelectValue placeholder="Выберите город" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {cities.map(c => (
+                        <SelectItem key={c.city} value={c.city}>
+                          {c.city}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <Input
+                    id="city"
+                    value={city}
+                    onChange={e => setCity(e.target.value)}
+                    placeholder="Например: Казань"
+                  />
+                )}
+              </div>
+
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="space-y-2">
                   <Label htmlFor="name">Имя</Label>

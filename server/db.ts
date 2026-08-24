@@ -19,6 +19,7 @@ import {
   adBanners,
   dentalLeads,
   dentalLeadEvents,
+  dentalPartners,
 } from "../drizzle/schema";
 import { ENV } from "./_core/env";
 import { URGENCY_SLA_MINUTES as DENTAL_SLA_MINUTES } from "@shared/dental";
@@ -634,6 +635,10 @@ export type DentalLeadFilters = {
   search?: string;
   /** Только заявки, где обещанный срок первого касания уже вышел. */
   overdueOnly?: boolean;
+  partnerId?: number;
+  /** true — только нераспределённые заявки (нет партнёра в городе). */
+  unrouted?: boolean;
+  city?: string;
   limit?: number;
   offset?: number;
 };
@@ -660,6 +665,10 @@ function dentalLeadConditions(filters?: DentalLeadFilters) {
     conditions.push(sql`${dentalLeads.createdAt} >= ${filters.from}`);
   if (filters?.to)
     conditions.push(sql`${dentalLeads.createdAt} <= ${filters.to}`);
+  if (filters?.partnerId)
+    conditions.push(eq(dentalLeads.partnerId, filters.partnerId));
+  if (filters?.unrouted) conditions.push(sql`${dentalLeads.partnerId} IS NULL`);
+  if (filters?.city) conditions.push(eq(dentalLeads.city, filters.city));
   if (filters?.overdueOnly) {
     conditions.push(sql`${dentalLeads.firstTouchAt} IS NULL`);
     conditions.push(
@@ -897,4 +906,150 @@ export async function getDentalCampaignStats(days = 30) {
         leads > 0 ? Math.round((Number(r.critical || 0) / leads) * 100) : 0,
     };
   });
+}
+
+// ============ ПАРТНЁРСКИЕ КЛИНИКИ ============
+
+export async function getDentalPartners(filters?: {
+  city?: string;
+  status?: string;
+}) {
+  const db = await getDb();
+  if (!db) return [] as (typeof dentalPartners.$inferSelect)[];
+  const conditions: any[] = [];
+  if (filters?.city) conditions.push(eq(dentalPartners.city, filters.city));
+  if (filters?.status)
+    conditions.push(eq(dentalPartners.status, filters.status as any));
+  return db
+    .select()
+    .from(dentalPartners)
+    .where(conditions.length > 0 ? and(...conditions) : undefined)
+    .orderBy(asc(dentalPartners.city), asc(dentalPartners.name));
+}
+
+export async function getDentalPartnerById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const rows = await db
+    .select()
+    .from(dentalPartners)
+    .where(eq(dentalPartners.id, id))
+    .limit(1);
+  return rows[0] || undefined;
+}
+
+export async function createDentalPartner(
+  data: typeof dentalPartners.$inferInsert
+) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.insert(dentalPartners).values(data);
+  return result[0].insertId;
+}
+
+export async function updateDentalPartner(
+  id: number,
+  data: Partial<typeof dentalPartners.$inferInsert>
+) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(dentalPartners).set(data).where(eq(dentalPartners.id, id));
+}
+
+/** Города, где есть хотя бы один партнёр, принимающий заявки. */
+export async function getDentalCities() {
+  const db = await getDb();
+  if (!db) return [] as { city: string; partners: number }[];
+  const rows = await db
+    .select({ city: dentalPartners.city, partners: sql<number>`count(*)` })
+    .from(dentalPartners)
+    .where(eq(dentalPartners.status, "active"))
+    .groupBy(dentalPartners.city)
+    .orderBy(asc(dentalPartners.city));
+  return rows.map(r => ({
+    city: String(r.city),
+    partners: Number(r.partners || 0),
+  }));
+}
+
+/**
+ * Кандидаты на приём заявки вместе с сегодняшней загрузкой — маршрутизация
+ * распределяет по наименее загруженному, поэтому счётчик нужен из базы.
+ */
+export async function getPartnerCandidates(city: string) {
+  const db = await getDb();
+  if (!db)
+    return [] as (typeof dentalPartners.$inferSelect & {
+      todayCount: number;
+    })[];
+  const partners = await db
+    .select()
+    .from(dentalPartners)
+    .where(
+      and(eq(dentalPartners.status, "active"), eq(dentalPartners.city, city))
+    );
+  if (partners.length === 0) return [];
+
+  const counts = await db
+    .select({ partnerId: dentalLeads.partnerId, total: sql<number>`count(*)` })
+    .from(dentalLeads)
+    .where(
+      and(
+        inArray(
+          dentalLeads.partnerId,
+          partners.map(p => p.id)
+        ),
+        sql`DATE(${dentalLeads.createdAt}) = CURDATE()`
+      )
+    )
+    .groupBy(dentalLeads.partnerId);
+
+  const byPartner = new Map(
+    counts.map(c => [Number(c.partnerId), Number(c.total || 0)])
+  );
+  return partners.map(p => ({ ...p, todayCount: byPartner.get(p.id) ?? 0 }));
+}
+
+/** Сводка по партнёрам: сколько заявок отдано и сколько дошло до приёма. */
+export async function getDentalPartnerStats(days = 30) {
+  const db = await getDb();
+  if (!db)
+    return [] as {
+      partnerId: number | null;
+      name: string;
+      city: string;
+      leads: number;
+      visited: number;
+      pricePerVisit: string;
+    }[];
+  const rows = await db
+    .select({
+      partnerId: dentalLeads.partnerId,
+      name: sql<string>`coalesce(${dentalPartners.name}, 'Не распределено')`,
+      city: sql<string>`coalesce(${dentalPartners.city}, ${dentalLeads.city})`,
+      pricePerVisit: sql<string>`coalesce(${dentalPartners.pricePerVisit}, '0.00')`,
+      leads: sql<number>`count(*)`,
+      visited: sql<number>`sum(case when ${dentalLeads.status} = 'visited' then 1 else 0 end)`,
+    })
+    .from(dentalLeads)
+    .leftJoin(dentalPartners, eq(dentalLeads.partnerId, dentalPartners.id))
+    .where(
+      sql`${dentalLeads.createdAt} >= DATE_SUB(CURDATE(), INTERVAL ${days} DAY)`
+    )
+    .groupBy(
+      dentalLeads.partnerId,
+      sql`coalesce(${dentalPartners.name}, 'Не распределено')`,
+      sql`coalesce(${dentalPartners.city}, ${dentalLeads.city})`,
+      sql`coalesce(${dentalPartners.pricePerVisit}, '0.00')`
+    )
+    .orderBy(sql`count(*) DESC`);
+
+  return rows.map(r => ({
+    partnerId: r.partnerId === null ? null : Number(r.partnerId),
+    name: String(r.name),
+    city: String(r.city),
+    leads: Number(r.leads || 0),
+    visited: Number(r.visited || 0),
+    pricePerVisit: String(r.pricePerVisit ?? "0.00"),
+  }));
 }
