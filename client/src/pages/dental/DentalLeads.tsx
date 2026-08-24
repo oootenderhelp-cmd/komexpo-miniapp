@@ -67,6 +67,7 @@ import {
 } from "@shared/dental";
 import { Switch } from "@/components/ui/switch";
 import PartnersPanel from "@/components/dental/PartnersPanel";
+import SourcesPanel from "@/components/dental/SourcesPanel";
 
 const TIER_STYLES: Record<UrgencyTier, string> = {
   critical: "bg-red-100 text-red-800 border-red-200",
@@ -266,6 +267,7 @@ export default function DentalLeads() {
             <TabsTrigger value="report">Отчёт по дням</TabsTrigger>
             <TabsTrigger value="campaigns">Кампании</TabsTrigger>
             <TabsTrigger value="partners">Клиники</TabsTrigger>
+            <TabsTrigger value="sources">Источники</TabsTrigger>
           </TabsList>
 
           <TabsContent value="queue" className="space-y-4">
@@ -619,6 +621,10 @@ export default function DentalLeads() {
 
           <TabsContent value="partners">
             <PartnersPanel />
+          </TabsContent>
+
+          <TabsContent value="sources">
+            <SourcesPanel />
           </TabsContent>
         </Tabs>
       </div>

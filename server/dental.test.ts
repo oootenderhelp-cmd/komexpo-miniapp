@@ -20,6 +20,9 @@ import {
   groupByDay,
   type ExportLead,
 } from "./lib/leadExport";
+import { normalizeIntake, parseApiKey } from "@shared/leadSources";
+import { generateApiKey, hashApiKey } from "./leadIntake";
+import { normalizePhone } from "./lib/leadService";
 import { appRouter } from "./routers";
 import type { TrpcContext } from "./_core/context";
 
@@ -188,6 +191,134 @@ describe("право на переписку", () => {
       canContact({ ...base, messengerType: "none", messengerHandle: null })
     ).toBe(false);
     expect(canContact({ ...base, messengerHandle: "   " })).toBe(false);
+  });
+});
+
+describe("приём заявок из внешних источников", () => {
+  it("разбирает форму на Тильде с её названиями полей", () => {
+    const result = normalizeIntake("tilda", {
+      Name: "Анна",
+      Phone: "+7 (900) 111-22-33",
+      Город: "Казань",
+      consent: "yes",
+      utm_source: "yandex",
+    });
+    expect("error" in result).toBe(false);
+    if ("error" in result) return;
+    expect(result.name).toBe("Анна");
+    expect(result.city).toBe("Казань");
+    expect(result.utmSource).toBe("yandex");
+  });
+
+  it("разворачивает ответы лид-формы ВК из массива", () => {
+    const result = normalizeIntake("vk_lead_form", {
+      lead_id: "778",
+      consentPd: true,
+      answers: [
+        { key: "name", answer: "Дмитрий" },
+        { key: "phone", answer: "89001112233" },
+        { key: "city", answer: "Уфа" },
+      ],
+    });
+    expect("error" in result).toBe(false);
+    if ("error" in result) return;
+    expect(result.name).toBe("Дмитрий");
+    expect(result.phone).toBe("89001112233");
+    expect(result.externalId).toBe("778");
+  });
+
+  it("разбирает вложенный ответ Яндекс Формы", () => {
+    const result = normalizeIntake("yandex_form", {
+      consentPd: "1",
+      answer: {
+        data: {
+          name: { value: "Ольга" },
+          phone: { value: "+79001112233" },
+        },
+      },
+    });
+    expect("error" in result).toBe(false);
+    if ("error" in result) return;
+    expect(result.name).toBe("Ольга");
+  });
+
+  it("не принимает заявку без подтверждённого согласия", () => {
+    const result = normalizeIntake("partner_site", {
+      name: "Сергей",
+      phone: "89001112233",
+    });
+    expect("error" in result).toBe(true);
+    if (!("error" in result)) return;
+    expect(result.error).toMatch(/согласи/i);
+  });
+
+  it("не принимает заявку без телефона или с обрывком номера", () => {
+    expect(
+      normalizeIntake("api", { name: "Пётр", consentPd: true })
+    ).toHaveProperty("error");
+    expect(
+      normalizeIntake("api", { name: "Пётр", phone: "12345", consentPd: true })
+    ).toHaveProperty("error");
+  });
+
+  it("звонок в колл-трекинге принимается без имени и галочки", () => {
+    // Человек сам набрал номер клиники — это уже обращение.
+    const result = normalizeIntake("telephony", { phone: "+7 900 111-22-33" });
+    expect("error" in result).toBe(false);
+    if ("error" in result) return;
+    expect(result.name).toBe("Входящий звонок");
+    expect(result.consentPd).toBe(true);
+  });
+
+  it("понимает разные написания согласия", () => {
+    for (const value of [true, 1, "true", "1", "да", "on", "yes"]) {
+      const result = normalizeIntake("api", {
+        name: "Тест",
+        phone: "89001112233",
+        consentPd: value,
+      });
+      expect("error" in result).toBe(false);
+    }
+    for (const value of [false, 0, "нет", "", "false"]) {
+      const result = normalizeIntake("api", {
+        name: "Тест",
+        phone: "89001112233",
+        consentPd: value,
+      });
+      expect("error" in result).toBe(true);
+    }
+  });
+
+  it("телефон приводится к одному виду для поиска дублей", () => {
+    const expected = "+7 (900) 111-22-33";
+    expect(normalizePhone("89001112233")).toBe(expected);
+    expect(normalizePhone("79001112233")).toBe(expected);
+    expect(normalizePhone("+7 900 111 22 33")).toBe(expected);
+    // Нераспознанный формат оставляем как есть, а не портим.
+    expect(normalizePhone("12345")).toBe("12345");
+  });
+});
+
+describe("ключи источников", () => {
+  it("выдаёт ключ, который разбирается и сходится с хешем", () => {
+    const { key, prefix, hash } = generateApiKey();
+    const parsed = parseApiKey(key);
+    expect(parsed).not.toBeNull();
+    expect(parsed!.prefix).toBe(prefix);
+    expect(hashApiKey(parsed!.secret)).toBe(hash);
+  });
+
+  it("каждый ключ уникален", () => {
+    const keys = new Set(
+      Array.from({ length: 50 }, () => generateApiKey().key)
+    );
+    expect(keys.size).toBe(50);
+  });
+
+  it("отбраковывает мусор вместо ключа", () => {
+    expect(parseApiKey("")).toBeNull();
+    expect(parseApiKey("dlk_short_x")).toBeNull();
+    expect(parseApiKey("abc_12345678_secretsecretsecret")).toBeNull();
   });
 });
 
@@ -622,6 +753,17 @@ describe("роутер заявок", () => {
       offset: 0,
     });
     expect(result).toEqual({ items: [], total: 0 });
+  });
+
+  it("закрывает список источников от обычного пользователя", async () => {
+    const caller = appRouter.createCaller(createContext({ role: "user" }));
+    await expect(caller.dental.sources()).rejects.toThrow(/администратор/i);
+  });
+
+  it("не отдаёт хеш ключа в списке источников", async () => {
+    const caller = appRouter.createCaller(createContext({ role: "admin" }));
+    const sources = await caller.dental.sources();
+    expect(sources).toEqual([]);
   });
 
   it("выгружает книгу Excel даже на пустой базе", async () => {

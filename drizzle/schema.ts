@@ -331,6 +331,10 @@ export const dentalLeads = mysqlTable("dental_leads", {
   status: mysqlEnum("status", ["new", "contacted", "scheduled", "visited", "no_answer", "rejected", "spam"]).default("new").notNull(),
   assignedToUserId: int("assignedToUserId"),
 
+  // Откуда пришла заявка
+  sourceId: int("sourceId"),
+  externalId: varchar("externalId", { length: 128 }),
+
   // Кому из партнёров ушла заявка
   partnerId: int("partnerId"),
   routedAt: timestamp("routedAt"),
@@ -350,6 +354,8 @@ export const dentalLeads = mysqlTable("dental_leads", {
   index("dental_leads_phone_idx").on(table.phone),
   index("dental_leads_partner_idx").on(table.partnerId, table.createdAt),
   index("dental_leads_city_idx").on(table.city),
+  index("dental_leads_source_idx").on(table.sourceId, table.createdAt),
+  index("dental_leads_external_idx").on(table.externalId),
 ]);
 
 export const dentalLeadEvents = mysqlTable("dental_lead_events", {
@@ -398,3 +404,38 @@ export const dentalPartners = mysqlTable("dental_partners", {
 }, table => [
   index("dental_partners_city_idx").on(table.city, table.status),
 ]);
+
+// ============ ИСТОЧНИКИ ЗАЯВОК ============
+// Откуда падают заявки: своя форма, виджет на чужом сайте, лид-форма ВК,
+// Тильда, колл-трекинг. У каждого источника свой ключ и своя статистика.
+
+export const dentalLeadSources = mysqlTable("dental_lead_sources", {
+  id: int("id").autoincrement().primaryKey(),
+  name: varchar("name", { length: 255 }).notNull(),
+  type: mysqlEnum("type", [
+    "own_form",
+    "widget",
+    "partner_site",
+    "vk_lead_form",
+    "yandex_form",
+    "tilda",
+    "telephony",
+    "api",
+  ]).default("api").notNull(),
+
+  // Ключ хранится хешем: в базе его нельзя подсмотреть, показывается один раз
+  apiKeyPrefix: varchar("apiKeyPrefix", { length: 16 }).notNull().unique(),
+  apiKeyHash: varchar("apiKeyHash", { length: 128 }).notNull(),
+
+  /** Домен, с которого источнику разрешено слать заявки; пусто — любой. */
+  domain: varchar("domain", { length: 255 }),
+  /** Город по умолчанию, если источник его не передаёт. */
+  defaultCity: varchar("defaultCity", { length: 128 }),
+  /** Направление по умолчанию для узких форм («записаться на имплантацию»). */
+  defaultService: varchar("defaultService", { length: 64 }),
+
+  status: mysqlEnum("status", ["active", "paused"]).default("active").notNull(),
+  lastLeadAt: timestamp("lastLeadAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});

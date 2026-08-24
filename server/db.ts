@@ -20,6 +20,7 @@ import {
   dentalLeads,
   dentalLeadEvents,
   dentalPartners,
+  dentalLeadSources,
 } from "../drizzle/schema";
 import { ENV } from "./_core/env";
 import { URGENCY_SLA_MINUTES as DENTAL_SLA_MINUTES } from "@shared/dental";
@@ -636,6 +637,7 @@ export type DentalLeadFilters = {
   /** Только заявки, где обещанный срок первого касания уже вышел. */
   overdueOnly?: boolean;
   partnerId?: number;
+  sourceId?: number;
   /** true — только нераспределённые заявки (нет партнёра в городе). */
   unrouted?: boolean;
   city?: string;
@@ -667,6 +669,8 @@ function dentalLeadConditions(filters?: DentalLeadFilters) {
     conditions.push(sql`${dentalLeads.createdAt} <= ${filters.to}`);
   if (filters?.partnerId)
     conditions.push(eq(dentalLeads.partnerId, filters.partnerId));
+  if (filters?.sourceId)
+    conditions.push(eq(dentalLeads.sourceId, filters.sourceId));
   if (filters?.unrouted) conditions.push(sql`${dentalLeads.partnerId} IS NULL`);
   if (filters?.city) conditions.push(eq(dentalLeads.city, filters.city));
   if (filters?.overdueOnly) {
@@ -1051,5 +1055,108 @@ export async function getDentalPartnerStats(days = 30) {
     leads: Number(r.leads || 0),
     visited: Number(r.visited || 0),
     pricePerVisit: String(r.pricePerVisit ?? "0.00"),
+  }));
+}
+
+// ============ ИСТОЧНИКИ ЗАЯВОК ============
+
+export async function getDentalLeadSources() {
+  const db = await getDb();
+  if (!db) return [] as (typeof dentalLeadSources.$inferSelect)[];
+  return db
+    .select()
+    .from(dentalLeadSources)
+    .orderBy(desc(dentalLeadSources.createdAt));
+}
+
+export async function getLeadSourceByPrefix(prefix: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const rows = await db
+    .select()
+    .from(dentalLeadSources)
+    .where(eq(dentalLeadSources.apiKeyPrefix, prefix))
+    .limit(1);
+  return rows[0] || undefined;
+}
+
+export async function createDentalLeadSource(
+  data: typeof dentalLeadSources.$inferInsert
+) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.insert(dentalLeadSources).values(data);
+  return result[0].insertId;
+}
+
+export async function updateDentalLeadSource(
+  id: number,
+  data: Partial<typeof dentalLeadSources.$inferInsert>
+) {
+  const db = await getDb();
+  if (!db) return;
+  await db
+    .update(dentalLeadSources)
+    .set(data)
+    .where(eq(dentalLeadSources.id, id));
+}
+
+/** Заявка уже приходила из этого источника — защита от повторной доставки. */
+export async function findLeadByExternalId(
+  sourceId: number,
+  externalId: string
+) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const rows = await db
+    .select({ id: dentalLeads.id, publicId: dentalLeads.publicId })
+    .from(dentalLeads)
+    .where(
+      and(
+        eq(dentalLeads.sourceId, sourceId),
+        eq(dentalLeads.externalId, externalId)
+      )
+    )
+    .limit(1);
+  return rows[0] || undefined;
+}
+
+/** Сколько заявок дал каждый источник и сколько из них дошло до клиники. */
+export async function getDentalSourceStats(days = 30) {
+  const db = await getDb();
+  if (!db)
+    return [] as {
+      sourceId: number | null;
+      name: string;
+      type: string;
+      leads: number;
+      visited: number;
+    }[];
+  const rows = await db
+    .select({
+      sourceId: dentalLeads.sourceId,
+      name: sql<string>`coalesce(${dentalLeadSources.name}, 'Своя форма записи')`,
+      type: sql<string>`coalesce(${dentalLeadSources.type}, 'own_form')`,
+      leads: sql<number>`count(*)`,
+      visited: sql<number>`sum(case when ${dentalLeads.status} = 'visited' then 1 else 0 end)`,
+    })
+    .from(dentalLeads)
+    .leftJoin(dentalLeadSources, eq(dentalLeads.sourceId, dentalLeadSources.id))
+    .where(
+      sql`${dentalLeads.createdAt} >= DATE_SUB(CURDATE(), INTERVAL ${days} DAY)`
+    )
+    .groupBy(
+      dentalLeads.sourceId,
+      sql`coalesce(${dentalLeadSources.name}, 'Своя форма записи')`,
+      sql`coalesce(${dentalLeadSources.type}, 'own_form')`
+    )
+    .orderBy(sql`count(*) DESC`);
+
+  return rows.map(r => ({
+    sourceId: r.sourceId === null ? null : Number(r.sourceId),
+    name: String(r.name),
+    type: String(r.type),
+    leads: Number(r.leads || 0),
+    visited: Number(r.visited || 0),
   }));
 }

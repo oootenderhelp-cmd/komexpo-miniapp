@@ -19,11 +19,13 @@ import {
   canContact,
   getService,
   getSlaState,
-  pickPartner,
-  scoreUrgency,
   type UrgencyTier,
 } from "@shared/dental";
+import { regionOf } from "@shared/cities";
 import * as db from "../db";
+import { IntakeError, intakeLead, normalizePhone } from "./../lib/leadService";
+import { generateApiKey } from "../leadIntake";
+import { LEAD_SOURCE_TYPES } from "@shared/leadSources";
 import { buildLeadWorkbook, type ExportLead } from "../lib/leadExport";
 import { protectedProcedure, publicProcedure, router } from "../_core/trpc";
 
@@ -76,16 +78,6 @@ const phoneSchema = z
     /^[\d\s()+\-]+$/,
     "Телефон может содержать только цифры и знаки + ( ) -"
   );
-
-const normalizePhone = (raw: string): string => {
-  const digits = raw.replace(/\D/g, "");
-  const national =
-    digits.length === 11 && (digits[0] === "8" || digits[0] === "7")
-      ? digits.slice(1)
-      : digits;
-  if (national.length !== 10) return raw.trim();
-  return `+7 (${national.slice(0, 3)}) ${national.slice(3, 6)}-${national.slice(6, 8)}-${national.slice(8)}`;
-};
 
 /**
  * Защита от случайного дубля: одна и та же форма, отправленная дважды подряд,
@@ -210,119 +202,62 @@ export const dentalRouter = router({
       }
 
       const phone = normalizePhone(input.phone);
-      if (isDuplicate(`${phone}:${input.serviceSlug}`, Date.now())) {
+      const dedupeKey = `${phone}:${input.serviceSlug}`;
+      if (isDuplicate(dedupeKey, Date.now())) {
         throw new TRPCError({
           code: "CONFLICT",
           message: "Заявка уже принята, администратор свяжется с вами",
         });
       }
 
-      const urgency = scoreUrgency({
-        serviceSlug: input.serviceSlug,
-        painLevel: input.painLevel,
-        symptoms: input.symptoms,
-        readiness: input.readiness,
-      });
-
-      // Канал связи учитываем только вместе с согласием на коммуникации:
-      // иначе ник в базе есть, а права написать нет — и кто-нибудь напишет.
-      const messengerAllowed =
-        input.consentMarketing && input.messengerType !== "none";
-      const publicId = `DL-${nanoid(8).toUpperCase()}`;
-
-      // Модель агрегатора: заявка сразу уходит клинике-партнёру в этом городе.
-      // Если партнёра нет, заявка остаётся нераспределённой — её видно в
-      // кабинете отдельным фильтром, это сигнал, что город пора закрывать.
-      const candidates = await db.getPartnerCandidates(input.city);
-      const partner = pickPartner(
-        candidates.map(c => ({
-          id: c.id,
-          name: c.name,
-          city: c.city,
-          services: Array.isArray(c.services) ? (c.services as string[]) : null,
-          status: c.status,
-          dailyCap: c.dailyCap,
-          todayCount: c.todayCount,
-        })),
-        { city: input.city, serviceSlug: input.serviceSlug }
-      );
-
-      const leadId = await db.createDentalLead({
-        publicId,
-        name: input.name,
-        phone,
-        email: input.email ? input.email : null,
-        messengerType: messengerAllowed ? input.messengerType : "none",
-        messengerHandle: messengerAllowed
-          ? (input.messengerHandle ?? null)
-          : null,
-        city: input.city,
-        serviceSlug: input.serviceSlug,
-        comment: input.comment ?? null,
-        painLevel: input.painLevel,
-        symptoms: input.symptoms,
-        readiness: input.readiness,
-        urgencyScore: urgency.score,
-        urgencyTier: urgency.tier,
-        urgencyReasons: urgency.reasons,
-        sourceChannel: input.sourceChannel ?? null,
-        utmSource: input.utmSource ?? null,
-        utmMedium: input.utmMedium ?? null,
-        utmCampaign: input.utmCampaign ?? null,
-        utmContent: input.utmContent ?? null,
-        utmTerm: input.utmTerm ?? null,
-        landingPath: input.landingPath ?? null,
-        consentPd: true,
-        consentMarketing: input.consentMarketing,
-        consentAt: new Date(),
-        consentText: "dental-v1",
-        status: "new",
-        partnerId: partner?.id ?? null,
-        routedAt: partner ? new Date() : null,
-        region: input.region ?? null,
-      });
-
-      // Заявка не записалась (нет БД, отказ вставки) — нельзя отвечать «принято»:
-      // человек с острой болью решит, что ему перезвонят, и будет ждать зря.
-      if (!leadId) {
-        recentSubmissions.delete(`${phone}:${input.serviceSlug}`);
-        throw new TRPCError({
-          code: "INTERNAL_SERVER_ERROR",
-          message:
-            "Не смогли сохранить заявку. Позвоните, пожалуйста, в клинику напрямую.",
+      try {
+        const result = await intakeLead({
+          name: input.name,
+          phone: input.phone,
+          email: input.email || null,
+          messengerType: input.messengerType,
+          messengerHandle: input.messengerHandle ?? null,
+          city: input.city,
+          region: input.region ?? regionOf(input.city) ?? null,
+          serviceSlug: input.serviceSlug,
+          comment: input.comment ?? null,
+          painLevel: input.painLevel,
+          symptoms: input.symptoms,
+          readiness: input.readiness,
+          sourceChannel: input.sourceChannel ?? null,
+          utmSource: input.utmSource ?? null,
+          utmMedium: input.utmMedium ?? null,
+          utmCampaign: input.utmCampaign ?? null,
+          utmContent: input.utmContent ?? null,
+          utmTerm: input.utmTerm ?? null,
+          landingPath: input.landingPath ?? null,
+          consentMarketing: input.consentMarketing,
         });
-      }
 
-      // Срочную заявку админ должен увидеть сразу: на критичную обещано
-      // первое касание за 15 минут, а вкладку кабинета никто не обновляет.
-      if (urgency.tier === "critical" || urgency.tier === "high") {
-        try {
-          const staffIds = await db.getStaffUserIds();
-          await db.createNotifications(staffIds, {
-            type: "dental_urgent_lead",
-            title:
-              urgency.tier === "critical"
-                ? `Критичная заявка ${publicId}: связаться за ${URGENCY_SLA_MINUTES.critical} минут`
-                : `Срочная заявка ${publicId}: связаться за час`,
-            message: `${service.name}, ${input.name}, ${phone}. ${urgency.reasons.join(", ")}.`,
-            link: "/dental/leads",
+        return {
+          publicId: result.publicId,
+          urgency: { score: result.urgencyScore, tier: result.urgencyTier },
+          slaMinutes: result.slaMinutes,
+          leadMagnet: result.leadMagnet,
+          clinic: result.clinic
+            ? { name: result.clinic.name, city: result.clinic.city }
+            : null,
+        };
+      } catch (error) {
+        // Заявка не записалась — снимаем защиту от дубля, чтобы человек мог
+        // отправить форму повторно, а не упёрся в «уже принято».
+        recentSubmissions.delete(dedupeKey);
+        if (error instanceof IntakeError) {
+          throw new TRPCError({
+            code:
+              error.code === "server_error"
+                ? "INTERNAL_SERVER_ERROR"
+                : "BAD_REQUEST",
+            message: error.message,
           });
-        } catch (error) {
-          // Заявка уже сохранена — сбой оповещения не должен её отменять.
-          console.warn(
-            "[Dental] Не удалось оповестить администраторов:",
-            error
-          );
         }
+        throw error;
       }
-
-      return {
-        publicId,
-        urgency,
-        slaMinutes: URGENCY_SLA_MINUTES[urgency.tier],
-        leadMagnet: service.leadMagnet,
-        clinic: partner ? { name: partner.name, city: partner.city } : null,
-      };
     }),
 
   /** Отзыв согласия по номеру заявки — обязателен по 152-ФЗ. */
@@ -362,6 +297,7 @@ export const dentalRouter = router({
           search: z.string().trim().max(255).optional(),
           overdueOnly: z.boolean().optional(),
           partnerId: z.number().int().optional(),
+          sourceId: z.number().int().optional(),
           unrouted: z.boolean().optional(),
           city: z.string().trim().max(128).optional(),
           limit: z.number().int().min(1).max(200).default(50),
@@ -524,6 +460,76 @@ export const dentalRouter = router({
         body: input.body ?? null,
         actorUserId: ctx.user.id,
       });
+      return { success: true };
+    }),
+
+  // ============ ИСТОЧНИКИ ЗАЯВОК ============
+
+  sources: staffProcedure.query(async () => {
+    const sources = await db.getDentalLeadSources();
+    // Хеш ключа наружу не отдаём — сам ключ показывается один раз при создании.
+    return sources.map(({ apiKeyHash, ...rest }) => rest);
+  }),
+
+  sourceStats: staffProcedure
+    .input(
+      z
+        .object({ days: z.number().int().min(1).max(365).default(30) })
+        .default({ days: 30 })
+    )
+    .query(async ({ input }) => db.getDentalSourceStats(input.days)),
+
+  createSource: staffProcedure
+    .input(
+      z.object({
+        name: z.string().trim().min(2).max(255),
+        type: z.enum(LEAD_SOURCE_TYPES as [string, ...string[]]),
+        domain: z.string().trim().max(255).optional(),
+        defaultCity: z.string().trim().max(128).optional(),
+        defaultService: serviceSlugSchema.optional(),
+      })
+    )
+    .mutation(async ({ input }) => {
+      const { key, prefix, hash } = generateApiKey();
+      const sourceId = await db.createDentalLeadSource({
+        name: input.name,
+        type: input.type as any,
+        apiKeyPrefix: prefix,
+        apiKeyHash: hash,
+        domain: input.domain || null,
+        defaultCity: input.defaultCity || null,
+        defaultService: input.defaultService || null,
+        status: "active",
+      });
+      if (!sourceId) {
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: "Не удалось сохранить источник",
+        });
+      }
+      // Единственный момент, когда ключ виден целиком: дальше только хеш.
+      return { id: Number(sourceId), apiKey: key };
+    }),
+
+  updateSource: staffProcedure
+    .input(
+      z.object({
+        id: z.number().int(),
+        status: z.enum(["active", "paused"]).optional(),
+        domain: z.string().trim().max(255).optional(),
+        defaultCity: z.string().trim().max(128).optional(),
+        defaultService: serviceSlugSchema.optional(),
+      })
+    )
+    .mutation(async ({ input }) => {
+      const patch: Record<string, unknown> = {};
+      if (input.status !== undefined) patch.status = input.status;
+      if (input.domain !== undefined) patch.domain = input.domain || null;
+      if (input.defaultCity !== undefined)
+        patch.defaultCity = input.defaultCity || null;
+      if (input.defaultService !== undefined)
+        patch.defaultService = input.defaultService;
+      await db.updateDentalLeadSource(input.id, patch);
       return { success: true };
     }),
 
